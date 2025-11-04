@@ -3,11 +3,13 @@ import { Link, useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 
-const Login = () => {
+const Signup = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
   const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState("");
 
@@ -18,6 +20,16 @@ const Login = () => {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
+      const safeName = name.trim();
+      const safePhone = phone.trim();
+
+      await apiClient.post("/api/register", {
+        name: safeName,
+        email: normalizedEmail,
+        password,
+        ...(safePhone ? { phone: safePhone } : {}),
+      });
+
       const { data } = await apiClient.post("/api/login", {
         email: normalizedEmail,
         password,
@@ -25,29 +37,42 @@ const Login = () => {
 
       login(data.access_token, data.user);
       setStatus("success");
-      const displayName = data.user?.name || data.user?.email || "friend";
-      setMessage(`Welcome back, ${displayName}.`);
+      setMessage("Account created successfully. Redirecting...");
       navigate("/products");
     } catch (err) {
       setStatus("error");
-      setMessage("We could not confirm those credentials. Please try again.");
-      return;
+      if (err.response?.status === 400) {
+        setMessage(err.response.data?.message ?? "That email is already registered.");
+      } else {
+        setMessage("We could not create your account. Please try again.");
+      }
     }
   };
 
   return (
     <section className="page auth-page">
       <div className="auth-page__panel">
-        <p className="eyebrow">Member Access</p>
-        <h1 className="page__title">Welcome to the Inner Circle</h1>
+        <p className="eyebrow">Join the Collective</p>
+        <h1 className="page__title">Become a Lime Store Insider</h1>
         <p className="page__subtitle">
-          Sign in to manage your purchases, track bespoke orders, and access
-          exclusive tastings.
+          Unlock private tastings, curated recommendations, and invitation-only
+          releases crafted with our signature citrus artistry.
         </p>
       </div>
       <div className="auth-card">
-        <h2 className="auth-card__title">Log In</h2>
+        <h2 className="auth-card__title">Sign Up</h2>
         <form className="auth-card__form" onSubmit={handleSubmit}>
+          <label className="input-group">
+            <span>Full Name</span>
+            <input
+              id="name"
+              name="name"
+              value={name}
+              autoComplete="name"
+              onChange={(event) => setName(event.target.value)}
+              required
+            />
+          </label>
           <label className="input-group">
             <span>Email</span>
             <input
@@ -61,13 +86,25 @@ const Login = () => {
             />
           </label>
           <label className="input-group">
+            <span>Phone (optional)</span>
+            <input
+              id="phone"
+              name="phone"
+              type="tel"
+              value={phone}
+              autoComplete="tel"
+              onChange={(event) => setPhone(event.target.value)}
+              placeholder="+1 555 123 4567"
+            />
+          </label>
+          <label className="input-group">
             <span>Password</span>
             <input
               id="password"
               name="password"
               type="password"
               value={password}
-              autoComplete="current-password"
+              autoComplete="new-password"
               onChange={(event) => setPassword(event.target.value)}
               required
             />
@@ -77,7 +114,7 @@ const Login = () => {
             className="button button--gradient"
             disabled={status === "loading"}
           >
-            {status === "loading" ? "Signing you in..." : "Enter"}
+            {status === "loading" ? "Creating account..." : "Join the Club"}
           </button>
           {message && (
             <p
@@ -94,9 +131,9 @@ const Login = () => {
           )}
         </form>
         <p className="auth-card__hint">
-          New to Lime Store?{" "}
-          <Link to="/signup" className="link-highlight">
-            Create an account.
+          Already registered?{" "}
+          <Link to="/login" className="link-highlight">
+            Log in here.
           </Link>
         </p>
       </div>
@@ -104,4 +141,4 @@ const Login = () => {
   );
 };
 
-export default Login;
+export default Signup;

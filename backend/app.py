@@ -1,5 +1,5 @@
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Dict, List
 
 import bcrypt
@@ -48,17 +48,36 @@ def create_app() -> Flask:
     @app.route("/api/register", methods=["POST"])
     def register():
         payload = request.get_json(silent=True) or {}
-        username = payload.get("username", "").strip()
-        password = payload.get("password", "")
+        email = str(payload.get("email", "")).strip().lower()
+        name = str(payload.get("name", "")).strip()
+        password = str(payload.get("password", ""))
+        phone = str(payload.get("phone", "")).strip()
 
-        if not username or not password:
-            return jsonify({"message": "Username and password required."}), 400
+        if not email or not name or not password:
+            return (
+                jsonify(
+                    {
+                        "message": "Email, name, and password are required to create an account."
+                    }
+                ),
+                400,
+            )
 
-        if db.users.find_one({"username": username}):
-            return jsonify({"message": "Username already exists."}), 400
+        if db.users.find_one({"email": email}):
+            return jsonify({"message": "An account with this email already exists."}), 400
 
         hashed_pw = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
-        db.users.insert_one({"username": username, "password": hashed_pw})
+        user_document = {
+            "email": email,
+            "name": name,
+            "password": hashed_pw,
+            "created_at": datetime.utcnow(),
+        }
+
+        if phone:
+            user_document["phone"] = phone
+
+        db.users.insert_one(user_document)
 
         return jsonify({"message": "User registered successfully."}), 201
 
@@ -66,15 +85,23 @@ def create_app() -> Flask:
     @app.route("/api/login", methods=["POST"])
     def login():
         payload = request.get_json(silent=True) or {}
-        username = payload.get("username", "")
-        password = payload.get("password", "")
+        email = str(payload.get("email", "")).strip().lower()
+        password = str(payload.get("password", ""))
 
-        user = db.users.find_one({"username": username})
+        if not email or not password:
+            return jsonify({"message": "Email and password are required."}), 400
+
+        user = db.users.find_one({"email": email})
         if not user or not bcrypt.checkpw(password.encode("utf-8"), user["password"]):
             return jsonify({"message": "Invalid credentials"}), 401
 
-        token = create_access_token(identity=username)
-        return jsonify({"access_token": token, "user": username})
+        token = create_access_token(identity=email)
+        user_profile = {
+            "name": user.get("name", ""),
+            "email": user["email"],
+            "phone": user.get("phone", ""),
+        }
+        return jsonify({"access_token": token, "user": user_profile})
 
     # Products
     @app.route("/api/products", methods=["GET"])
