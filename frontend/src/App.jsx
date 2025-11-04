@@ -1,4 +1,5 @@
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import Account from "./pages/Account";
 import Cart from "./pages/Cart";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
@@ -14,6 +15,7 @@ const App = () => {
     { to: "/", label: "Home" },
     { to: "/products", label: "Products" },
     { to: "/cart", label: "Cart" },
+    { to: "/account", label: "Account", authOnly: true },
   ];
 
   const handleLogout = () => {
@@ -35,18 +37,20 @@ const App = () => {
           </NavLink>
         </div>
         <nav className="lux-header__nav">
-          {navigationItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === "/"}
-              className={({ isActive }) =>
-                `lux-nav__item${isActive ? " lux-nav__item--active" : ""}`
-              }
-            >
-              {item.label}
-            </NavLink>
-          ))}
+          {navigationItems
+            .filter((item) => !item.authOnly || isAuthenticated)
+            .map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === "/"}
+                className={({ isActive }) =>
+                  `lux-nav__item${isActive ? " lux-nav__item--active" : ""}`
+                }
+              >
+                {item.label}
+              </NavLink>
+            ))}
         </nav>
         <div className="lux-header__account">
           {isAuthenticated ? (
@@ -79,6 +83,7 @@ const App = () => {
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/cart" element={<Cart />} />
+          <Route path="/account" element={<Account />} />
         </Routes>
       </main>
       <footer className="lux-footer">

@@ -1,1 +1,1 @@
-version 1.1 Decorated and Working Profiles log in and sign up
+v1.2 Profile Tab and User Password Reset (Doesn't require old password)

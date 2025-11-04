@@ -103,6 +103,87 @@ def create_app() -> Flask:
         }
         return jsonify({"access_token": token, "user": user_profile})
 
+    @app.route("/api/account", methods=["GET", "PUT"])
+    @jwt_required()
+    def manage_account():
+        current_email = get_jwt_identity()
+        user = db.users.find_one({"email": current_email})
+
+        if not user:
+            return jsonify({"message": "Account not found."}), 404
+
+        if request.method == "GET":
+            return jsonify(
+                {
+                    "user": {
+                        "name": user.get("name", ""),
+                        "email": user.get("email", ""),
+                        "phone": user.get("phone", ""),
+                    }
+                }
+            )
+
+        payload = request.get_json(silent=True) or {}
+
+        desired_email = str(payload.get("email", current_email)).strip().lower()
+        desired_name = str(payload.get("name", user.get("name", ""))).strip()
+        desired_phone = str(payload.get("phone", user.get("phone", ""))).strip()
+        new_password = str(payload.get("password", "")).strip()
+
+        if not desired_email:
+            return jsonify({"message": "Email is required."}), 400
+
+        if desired_email != current_email and db.users.find_one({"email": desired_email}):
+            return jsonify({"message": "Another account already uses this email."}), 400
+
+        updates: Dict[str, str] = {}
+        unset_ops: Dict[str, str] = {}
+
+        if desired_email != user.get("email"):
+            updates["email"] = desired_email
+
+        if desired_name and desired_name != user.get("name"):
+            updates["name"] = desired_name
+
+        if desired_phone:
+            if desired_phone != user.get("phone", ""):
+                updates["phone"] = desired_phone
+        else:
+            if user.get("phone"):
+                unset_ops["phone"] = ""
+
+        if new_password:
+            hashed_pw = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt())
+            updates["password"] = hashed_pw
+
+        if not updates and not unset_ops:
+            return jsonify({"message": "No account changes detected."}), 400
+
+        update_query = {}
+        if updates:
+            update_query["$set"] = updates
+        if unset_ops:
+            update_query["$unset"] = unset_ops
+
+        db.users.update_one({"email": current_email}, update_query)
+
+        updated_email = updates.get("email", current_email)
+        updated_user = db.users.find_one({"email": updated_email})
+
+        token = create_access_token(identity=updated_email)
+        user_profile = {
+            "name": updated_user.get("name", ""),
+            "email": updated_user.get("email", ""),
+            "phone": updated_user.get("phone", ""),
+        }
+        return jsonify(
+            {
+                "message": "Account updated successfully.",
+                "access_token": token,
+                "user": user_profile,
+            }
+        )
+
     # Products
     @app.route("/api/products", methods=["GET"])
     def list_products():
