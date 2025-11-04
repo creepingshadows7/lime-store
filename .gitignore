@@ -1,3 +1,9 @@
+# helper docs
+GitInfo.txt
+requirements.txt
+Startup.txt
+
+
 # Python
 __pycache__/
 *.pyc
