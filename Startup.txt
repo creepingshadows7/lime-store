@@ -1,0 +1,17 @@
+Lime Shop startup:
+
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+
+Run the Flask Backend:
+
+cd backend
+
+python app.py
+
+
+Run the React Frontend
+
+cd frontend
+
+npm run dev
