@@ -1,25 +1,27 @@
-@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap");
-
 :root {
-  --color-background: #05090f;
-  --color-surface: rgba(14, 24, 32, 0.82);
-  --color-surface-alt: rgba(8, 12, 18, 0.7);
-  --color-border: rgba(183, 255, 120, 0.22);
-  --color-headline: #f6ffe6;
-  --color-text: #e3f3db;
-  --color-muted: rgba(227, 243, 219, 0.66);
-  --color-accent: #b7ff6b;
-  --color-accent-strong: #7dff94;
-  --color-warning: #ffdd87;
-  --color-error: #ff8585;
-  --color-success: #89ffbc;
-  font-family: "Outfit", sans-serif;
+  --bg-primary: #030711;
+  --bg-secondary: #040b18;
+  --glass-light: rgba(18, 33, 25, 0.55);
+  --glass-strong: rgba(14, 26, 20, 0.8);
+  --glass-border: rgba(175, 255, 179, 0.25);
+  --glass-highlight: rgba(160, 255, 180, 0.45);
+  --text-primary: #f5ffe9;
+  --text-secondary: rgba(226, 248, 220, 0.75);
+  --text-muted: rgba(226, 248, 220, 0.55);
+  --accent-lime: #a9ff7c;
+  --accent-mint: #73ffc6;
+  --warning: #ffde8a;
+  --error: #ff9ca6;
+  --success: #7df9c8;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   line-height: 1.6;
-  color: var(--color-text);
-  background-color: var(--color-background);
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
 }
 
 *,
@@ -31,45 +33,80 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: radial-gradient(circle at 10% 20%, rgba(73, 107, 62, 0.25), transparent),
-    radial-gradient(circle at 80% 0%, rgba(122, 255, 163, 0.18), transparent),
-    radial-gradient(circle at 50% 80%, rgba(34, 57, 45, 0.25), transparent),
-    var(--color-background);
+  background: radial-gradient(circle at 20% 10%, rgba(102, 255, 195, 0.12), transparent 55%),
+    radial-gradient(circle at 80% 0%, rgba(160, 255, 127, 0.15), transparent 60%),
+    radial-gradient(circle at 50% 95%, rgba(24, 54, 41, 0.35), transparent 70%),
+    var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  width: 70vw;
+  height: 70vw;
+  border-radius: 50%;
+  filter: blur(140px);
+  opacity: 0.35;
+  z-index: -2;
+  pointer-events: none;
+  transition: transform 1.2s var(--ease-out);
+}
+
+body::before {
+  top: -25vw;
+  right: -30vw;
+  background: radial-gradient(circle, rgba(128, 255, 192, 0.3), transparent 62%);
+}
+
+body::after {
+  bottom: -32vw;
+  left: -28vw;
+  background: radial-gradient(circle, rgba(66, 178, 122, 0.35), transparent 70%);
 }
 
 #root {
   min-height: 100vh;
+  position: relative;
+  isolation: isolate;
 }
 
 a {
-  color: var(--color-accent);
+  color: var(--accent-lime);
   text-decoration: none;
-  transition: color 0.2s ease, opacity 0.2s ease;
+  transition: color 0.24s var(--ease-out), opacity 0.24s var(--ease-out);
 }
 
 a:hover {
-  color: var(--color-accent-strong);
-  opacity: 0.9;
+  color: var(--accent-mint);
+  opacity: 0.92;
 }
 
 input,
 textarea {
   font: inherit;
-  color: var(--color-headline);
-  background: var(--color-surface-alt);
-  border: 1px solid transparent;
-  border-radius: 12px;
+  color: var(--text-primary);
+  background: rgba(8, 17, 15, 0.65);
+  border: 1px solid rgba(167, 255, 179, 0.12);
+  border-radius: 14px;
   padding: 0.85rem 1rem;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.25s var(--ease-out);
 }
 
 input:focus,
 textarea:focus {
   outline: none;
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px rgba(183, 255, 120, 0.2);
+  border-color: var(--accent-lime);
+  box-shadow: 0 0 0 3px rgba(169, 255, 124, 0.25);
 }
 
 button {
   font: inherit;
+  cursor: pointer;
+}
+
+::selection {
+  background: rgba(169, 255, 124, 0.35);
+  color: var(--bg-secondary);
 }

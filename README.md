@@ -1,1 +1,1 @@
-v1.2 Profile Tab and User Password Reset (Doesn't require old password)
+v1.2.1 Design and Font change
