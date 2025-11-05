@@ -6,6 +6,7 @@ import { DEFAULT_ADMIN_EMAIL } from "../constants";
 
 const ROLE_OPTIONS = [
   { value: "admin", label: "Administrator" },
+  { value: "seller", label: "Seller" },
   { value: "standard", label: "Standard User" },
 ];
 
@@ -155,7 +156,7 @@ const Admin = () => {
         <h1 className="page__title">Manage Lime Store Members</h1>
         <p className="page__subtitle">
           Review every registered profile and adjust their access level between
-          administrator and standard user.
+          administrator, seller, and standard access tiers.
         </p>
       </div>
       <div className="admin-page__card">
@@ -200,13 +201,13 @@ const Admin = () => {
                     DEFAULT_ADMIN_EMAIL;
                   const joinedDate = user.created_at
                     ? new Date(user.created_at).toLocaleString()
-                    : "—";
+                    : "--";
 
                   return (
                     <tr key={user.id}>
-                      <td>{user.name || "—"}</td>
-                      <td>{user.email || "—"}</td>
-                      <td>{user.phone || "—"}</td>
+                      <td>{user.name || "--"}</td>
+                      <td>{user.email || "--"}</td>
+                      <td>{user.phone || "--"}</td>
                       <td>{joinedDate}</td>
                       <td>
                         <div className="admin-table__role-control">
@@ -222,7 +223,7 @@ const Admin = () => {
                                 key={option.value}
                                 value={option.value}
                                 disabled={
-                                  option.value === "standard" && isDefaultAdmin
+                                  isDefaultAdmin && option.value !== "admin"
                                 }
                               >
                                 {option.label}
@@ -230,7 +231,11 @@ const Admin = () => {
                             ))}
                           </select>
                           <span className="admin-table__role-indicator">
-                            {normalizedRole === "admin" ? "Admin" : "Standard"}
+                            {normalizedRole === "admin"
+                              ? "Admin"
+                              : normalizedRole === "seller"
+                              ? "Seller"
+                              : "Standard"}
                           </span>
                         </div>
                         {statusEntry.message ? (
@@ -255,4 +260,3 @@ const Admin = () => {
 };
 
 export default Admin;
-

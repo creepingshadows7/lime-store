@@ -1,1 +1,1 @@
-v1.2.2 Admin Page with 2 permissions
+v1.3 Role Seller and Store uploads enabled

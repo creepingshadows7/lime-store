@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Dict, Optional
 
 import bcrypt
 from dotenv import load_dotenv
@@ -46,28 +46,122 @@ def create_app() -> Flask:
     mongo = PyMongo(app)
     db = mongo.db
 
-    products: List[Dict[str, str]] = [
-        {"id": "lime-ade", "name": "Zesty Lime Ade", "price": "4.99"},
-        {"id": "lime-cake", "name": "Key Lime Cheesecake", "price": "12.50"},
-        {"id": "lime-pie", "name": "Classic Lime Pie", "price": "9.50"},
+    seed_products = [
+        {
+            "name": "Luminous Lime Elixir",
+            "price": 12.5,
+            "description": "Sparkling lime nectar infused with basil and cold-pressed citrus oils.",
+            "image_url": "https://images.unsplash.com/photo-1527169402691-feff5539e52c?auto=format&fit=crop&w=900&q=80",
+        },
+        {
+            "name": "Key Lime Cloud Tart",
+            "price": 18.0,
+            "description": "Feather-light tart with whipped mascarpone and candied lime zest.",
+            "image_url": "https://images.unsplash.com/photo-1499636136210-6f4ee915583e?auto=format&fit=crop&w=900&q=80",
+        },
+        {
+            "name": "Citrus Grove Bonbons",
+            "price": 9.75,
+            "description": "Hand painted white chocolate bonbons with a tangy lime curd center.",
+            "image_url": "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=900&q=80",
+        },
+        {
+            "name": "Verdant Velvet Cheesecake",
+            "price": 22.5,
+            "description": "Baked lime cheesecake with pistachio crumb and kaffir lime cream.",
+            "image_url": "https://images.unsplash.com/photo-1505253716362-afaea1d3d1af?auto=format&fit=crop&w=900&q=80",
+        },
+        {
+            "name": "Glacier Lime Sorbet",
+            "price": 6.5,
+            "description": "Icy sorbet spun with Tahitian vanilla and crystallized lime peel.",
+            "image_url": "https://images.unsplash.com/photo-1527169409092-72a3a99589aa?auto=format&fit=crop&w=900&q=80",
+        },
     ]
 
     # --- Helpers ---
 
-    def is_admin_user(user_document) -> bool:
+    ALLOWED_USER_ROLES = {"admin", "seller", "standard"}
+
+    def normalize_email(value: Optional[str]) -> str:
+        return str(value or "").strip().lower()
+
+    def normalize_role(value: Optional[str]) -> str:
+        normalized = str(value or "").strip().lower()
+        return normalized if normalized in ALLOWED_USER_ROLES else "standard"
+
+    def get_user_role(user_document) -> str:
         if not user_document:
-            return False
+            return "standard"
 
-        stored_email = str(user_document.get("email", "")).strip().lower()
-        stored_role = str(user_document.get("role", "")).strip().lower()
-        return stored_email == DEFAULT_ADMIN_EMAIL and stored_role == "admin"
+        email = normalize_email(user_document.get("email"))
+        if email == DEFAULT_ADMIN_EMAIL:
+            return "admin"
 
-    def require_admin_user():
+        return normalize_role(user_document.get("role", "standard"))
+
+    def require_role(*roles: str):
+        allowed = {normalize_role(role) for role in roles if role}
+
         current_email = get_jwt_identity()
         current_user = db.users.find_one({"email": current_email})
-        if not is_admin_user(current_user):
-            return None, (jsonify({"message": "Administrator access required."}), 403)
-        return current_user, None
+        user_role = get_user_role(current_user)
+
+        if user_role == "admin" or not allowed or user_role in allowed:
+            return current_user, None
+
+        return (
+            None,
+            (
+                jsonify(
+                    {"message": "You need additional permissions to perform this action."}
+                ),
+                403,
+            ),
+        )
+
+    def require_admin_user():
+        return require_role("admin")
+
+    def ensure_seed_products():
+        if db.products.count_documents({}) > 0:
+            return
+
+        timestamp = datetime.utcnow()
+        documents = []
+        for product in seed_products:
+            documents.append(
+                {
+                    "name": product.get("name", ""),
+                    "price": float(product.get("price", 0) or 0),
+                    "description": product.get("description", ""),
+                    "image_url": product.get("image_url", ""),
+                    "created_at": timestamp,
+                    "created_by": DEFAULT_ADMIN_EMAIL,
+                }
+            )
+
+        if documents:
+            db.products.insert_many(documents)
+
+    def serialize_product(product_document):
+        created_at = product_document.get("created_at")
+        try:
+            price_value = float(product_document.get("price", 0) or 0)
+        except (TypeError, ValueError):
+            price_value = 0.0
+
+        return {
+            "id": str(product_document.get("_id")),
+            "name": product_document.get("name", ""),
+            "price": f"{price_value:.2f}",
+            "description": product_document.get("description", ""),
+            "image_url": product_document.get("image_url", ""),
+            "created_at": created_at.isoformat()
+            if isinstance(created_at, datetime)
+            else None,
+            "created_by": product_document.get("created_by", ""),
+        }
 
     # --- ROUTES ---
 
@@ -75,7 +169,7 @@ def create_app() -> Flask:
     @app.route("/api/register", methods=["POST"])
     def register():
         payload = request.get_json(silent=True) or {}
-        email = str(payload.get("email", "")).strip().lower()
+        email = normalize_email(payload.get("email"))
         name = str(payload.get("name", "")).strip()
         password = str(payload.get("password", ""))
         phone = str(payload.get("phone", "")).strip()
@@ -115,7 +209,7 @@ def create_app() -> Flask:
     @app.route("/api/login", methods=["POST"])
     def login():
         payload = request.get_json(silent=True) or {}
-        email = str(payload.get("email", "")).strip().lower()
+        email = normalize_email(payload.get("email"))
         password = str(payload.get("password", ""))
 
         if not email or not password:
@@ -125,7 +219,7 @@ def create_app() -> Flask:
         if not user or not bcrypt.checkpw(password.encode("utf-8"), user["password"]):
             return jsonify({"message": "Invalid credentials"}), 401
 
-        stored_email = str(user.get("email", "")).strip().lower()
+        stored_email = normalize_email(user.get("email"))
         if stored_email == DEFAULT_ADMIN_EMAIL and str(
             user.get("role", "")
         ).strip().lower() != "admin":
@@ -145,7 +239,7 @@ def create_app() -> Flask:
             "name": user.get("name", ""),
             "email": user["email"],
             "phone": user.get("phone", ""),
-            "role": user.get("role", "standard"),
+            "role": get_user_role(user),
         }
         return jsonify({"access_token": token, "user": user_profile})
 
@@ -165,14 +259,14 @@ def create_app() -> Flask:
                         "name": user.get("name", ""),
                         "email": user.get("email", ""),
                         "phone": user.get("phone", ""),
-                        "role": user.get("role", "standard"),
+                        "role": get_user_role(user),
                     }
                 }
             )
 
         payload = request.get_json(silent=True) or {}
 
-        desired_email = str(payload.get("email", current_email)).strip().lower()
+        desired_email = normalize_email(payload.get("email", current_email))
         desired_name = str(payload.get("name", user.get("name", ""))).strip()
         desired_phone = str(payload.get("phone", user.get("phone", ""))).strip()
         new_password = str(payload.get("password", "")).strip()
@@ -222,7 +316,7 @@ def create_app() -> Flask:
             "name": updated_user.get("name", ""),
             "email": updated_user.get("email", ""),
             "phone": updated_user.get("phone", ""),
-            "role": updated_user.get("role", "standard"),
+            "role": get_user_role(updated_user),
         }
         return jsonify(
             {
@@ -235,7 +329,56 @@ def create_app() -> Flask:
     # Products
     @app.route("/api/products", methods=["GET"])
     def list_products():
+        ensure_seed_products()
+        product_docs = db.products.find().sort("created_at", -1)
+        products = [serialize_product(document) for document in product_docs]
         return jsonify({"products": products})
+
+    @app.route("/api/products", methods=["POST"])
+    @jwt_required()
+    def create_product():
+        current_user, permission_error = require_role("seller", "admin")
+        if permission_error:
+            return permission_error
+
+        payload = request.get_json(silent=True) or {}
+        name = str(payload.get("name", "")).strip()
+        description = str(payload.get("description", "")).strip()
+        image_url = str(payload.get("image_url", "")).strip()
+        raw_price = payload.get("price", "")
+
+        if not name:
+            return jsonify({"message": "A product name is required."}), 400
+
+        try:
+            price_value = round(float(raw_price), 2)
+        except (TypeError, ValueError):
+            return jsonify({"message": "Price must be a valid number."}), 400
+
+        if price_value <= 0:
+            return jsonify({"message": "Price must be greater than zero."}), 400
+
+        product_document = {
+            "name": name,
+            "description": description,
+            "image_url": image_url,
+            "price": price_value,
+            "created_at": datetime.utcnow(),
+            "created_by": normalize_email(current_user.get("email")),
+        }
+
+        result = db.products.insert_one(product_document)
+        created_product = db.products.find_one({"_id": result.inserted_id})
+
+        return (
+            jsonify(
+                {
+                    "message": "Product added successfully.",
+                    "product": serialize_product(created_product),
+                }
+            ),
+            201,
+        )
 
     # Checkout
     @app.route("/api/checkout", methods=["POST"])
@@ -268,6 +411,7 @@ def create_app() -> Flask:
 
         users = []
         for user in db.users.find():
+            role = get_user_role(user)
             created_at = user.get("created_at")
             users.append(
                 {
@@ -275,7 +419,7 @@ def create_app() -> Flask:
                     "name": user.get("name", ""),
                     "email": user.get("email", ""),
                     "phone": user.get("phone", ""),
-                    "role": user.get("role", "standard"),
+                    "role": role,
                     "created_at": created_at.isoformat() if isinstance(created_at, datetime) else None,
                 }
             )
@@ -292,9 +436,9 @@ def create_app() -> Flask:
         payload = request.get_json(silent=True) or {}
         desired_role = str(payload.get("role", "")).strip().lower()
 
-        if desired_role not in {"admin", "standard"}:
+        if desired_role not in ALLOWED_USER_ROLES:
             return (
-                jsonify({"message": "Role must be either 'admin' or 'standard'."}),
+                jsonify({"message": "Role must be 'admin', 'seller', or 'standard'."}),
                 400,
             )
 
@@ -319,6 +463,7 @@ def create_app() -> Flask:
         )
         updated_user = db.users.find_one({"_id": target_object_id})
         created_at = updated_user.get("created_at")
+        role = get_user_role(updated_user)
 
         return jsonify(
             {
@@ -328,7 +473,7 @@ def create_app() -> Flask:
                     "name": updated_user.get("name", ""),
                     "email": updated_user.get("email", ""),
                     "phone": updated_user.get("phone", ""),
-                    "role": updated_user.get("role", "standard"),
+                    "role": role,
                     "created_at": created_at.isoformat()
                     if isinstance(created_at, datetime)
                     else None,
