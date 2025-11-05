@@ -163,6 +163,33 @@ def create_app() -> Flask:
             "created_by": product_document.get("created_by", ""),
         }
 
+    def fetch_product(product_id: str):
+        try:
+            object_id = ObjectId(product_id)
+        except (InvalidId, TypeError):
+            return None, (jsonify({"message": "Invalid product identifier."}), 400)
+
+        product_document = db.products.find_one({"_id": object_id})
+        if not product_document:
+            return None, (jsonify({"message": "Product not found."}), 404)
+
+        return product_document, None
+
+    def can_manage_product(product_document, user_document) -> bool:
+        if not product_document or not user_document:
+            return False
+
+        user_role = get_user_role(user_document)
+        if user_role == "admin":
+            return True
+
+        if user_role != "seller":
+            return False
+
+        owner_email = normalize_email(product_document.get("created_by"))
+        current_email = normalize_email(user_document.get("email"))
+        return owner_email and owner_email == current_email
+
     # --- ROUTES ---
 
     # Register
@@ -379,6 +406,88 @@ def create_app() -> Flask:
             ),
             201,
         )
+
+    @app.route("/api/products/<product_id>", methods=["PUT"])
+    @jwt_required()
+    def update_product(product_id: str):
+        current_user, permission_error = require_role("seller", "admin")
+        if permission_error:
+            return permission_error
+
+        product_document, load_error = fetch_product(product_id)
+        if load_error:
+            return load_error
+
+        if not can_manage_product(product_document, current_user):
+            return (
+                jsonify({"message": "You do not have permission to modify this product."}),
+                403,
+            )
+
+        payload = request.get_json(silent=True) or {}
+        updates: Dict[str, object] = {}
+
+        if "name" in payload:
+            name_value = str(payload.get("name", "")).strip()
+            if len(name_value) < 3:
+                return jsonify({"message": "Product name must be at least 3 characters."}), 400
+            updates["name"] = name_value
+
+        if "description" in payload:
+            updates["description"] = str(payload.get("description", "")).strip()
+
+        if "image_url" in payload:
+            updates["image_url"] = str(payload.get("image_url", "")).strip()
+
+        if "price" in payload:
+            try:
+                price_value = round(float(payload["price"]), 2)
+            except (TypeError, ValueError):
+                return jsonify({"message": "Price must be a valid number."}), 400
+
+            if price_value <= 0:
+                return jsonify({"message": "Price must be greater than zero."}), 400
+            updates["price"] = price_value
+
+        if not updates:
+            return jsonify({"message": "No product changes detected."}), 400
+
+        updates["updated_at"] = datetime.utcnow()
+
+        db.products.update_one(
+            {"_id": product_document["_id"]},
+            {"$set": updates},
+        )
+
+        updated_product = db.products.find_one({"_id": product_document["_id"]})
+
+        return jsonify(
+            {
+                "message": "Product updated successfully.",
+                "product": serialize_product(updated_product),
+            }
+        )
+
+    @app.route("/api/products/<product_id>", methods=["DELETE"])
+    @jwt_required()
+    def delete_product(product_id: str):
+        current_user, permission_error = require_role("seller", "admin")
+        if permission_error:
+            return permission_error
+
+        product_document, load_error = fetch_product(product_id)
+        if load_error:
+            return load_error
+
+        if not can_manage_product(product_document, current_user):
+            return (
+                jsonify({"message": "You do not have permission to delete this product."}),
+                403,
+            )
+
+        db.products.delete_one({"_id": product_document["_id"]})
+
+        return jsonify({"message": "Product removed successfully."})
 
     # Checkout
     @app.route("/api/checkout", methods=["POST"])

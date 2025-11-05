@@ -19,6 +19,12 @@ const Products = () => {
   const [formStatus, setFormStatus] = useState("idle");
   const [formFeedback, setFormFeedback] = useState("");
   const [showUploadForm, setShowUploadForm] = useState(false);
+  const [formMode, setFormMode] = useState("create");
+  const [editingProductId, setEditingProductId] = useState(null);
+  const [managementFeedback, setManagementFeedback] = useState({
+    state: "idle",
+    message: "",
+  });
 
   const normalizedEmail = profile?.email
     ? profile.email.trim().toLowerCase()
@@ -79,7 +85,24 @@ const Products = () => {
   };
 
   const handleToggleUpload = () => {
-    setShowUploadForm((prev) => !prev);
+    setShowUploadForm((prev) => {
+      const next = !prev;
+      if (!next) {
+        setFormMode("create");
+        setEditingProductId(null);
+        setFormValues(initialFormState);
+        setFormStatus("idle");
+        setFormFeedback("");
+        setManagementFeedback({ state: "idle", message: "" });
+      } else {
+        setFormMode("create");
+        setEditingProductId(null);
+        setFormValues(initialFormState);
+        setFormStatus("idle");
+        setFormFeedback("");
+      }
+      return next;
+    });
     setFormStatus("idle");
     setFormFeedback("");
   };
@@ -118,30 +141,155 @@ const Products = () => {
 
     setFormStatus("loading");
     setFormFeedback("");
+    setManagementFeedback({ state: "idle", message: "" });
+
+    const payload = {
+      name,
+      price: numericPrice,
+      image_url: imageUrl,
+      description,
+    };
+
+    const isEditMode = formMode === "edit" && editingProductId;
 
     try {
-      const { data } = await apiClient.post("/api/products", {
-        name,
-        price: numericPrice,
-        image_url: imageUrl,
-        description,
-      });
+      if (isEditMode) {
+        const { data } = await apiClient.put(
+          `/api/products/${editingProductId}`,
+          payload
+        );
+        const updatedProduct = data?.product ?? null;
+        if (updatedProduct) {
+          setProducts((prev) =>
+            prev.map((product) =>
+              product.id === editingProductId ? updatedProduct : product
+            )
+          );
+        }
+        setFormStatus("success");
+        setFormFeedback(data?.message ?? "Product updated successfully.");
+        setManagementFeedback({
+          state: "success",
+          message: data?.message ?? "Product updated successfully.",
+        });
+        setFormMode("create");
+        setEditingProductId(null);
+        setShowUploadForm(false);
+        setFormValues(initialFormState);
+      } else {
+        const { data } = await apiClient.post("/api/products", payload);
+        const createdProduct = data?.product ?? null;
 
-      const createdProduct = data?.product ?? null;
-
-      setProducts((prev) =>
-        createdProduct ? [createdProduct, ...prev] : prev
-      );
-      setFormStatus("success");
-      setFormFeedback(data?.message ?? "Product added successfully.");
-      setFormValues(initialFormState);
+        setProducts((prev) =>
+          createdProduct ? [createdProduct, ...prev] : prev
+        );
+        setFormStatus("success");
+        setFormFeedback(data?.message ?? "Product added successfully.");
+        setFormValues(initialFormState);
+        setManagementFeedback({
+          state: "success",
+          message: data?.message ?? "Product added successfully.",
+        });
+      }
     } catch (err) {
       const message =
         err.response?.data?.message ??
         "We could not publish this item. Please try again.";
       setFormStatus("error");
       setFormFeedback(message);
+      setManagementFeedback({
+        state: "error",
+        message,
+      });
     }
+  };
+
+  const handleEditProduct = (product) => {
+    if (!product) {
+      return;
+    }
+
+    setShowUploadForm(true);
+    setFormMode("edit");
+    setEditingProductId(product.id);
+    setFormValues({
+      name: product.name ?? "",
+      price: product.price ?? "",
+      image_url: product.image_url ?? "",
+      description: product.description ?? "",
+    });
+    setFormStatus("idle");
+    setFormFeedback("");
+  };
+
+  const handleCancelEdit = () => {
+    setFormMode("create");
+    setEditingProductId(null);
+    setFormValues(initialFormState);
+    setFormStatus("idle");
+    setFormFeedback("");
+    setShowUploadForm(false);
+    setManagementFeedback({ state: "idle", message: "" });
+  };
+
+  const handleDeleteProduct = async (productId) => {
+    if (!productId) {
+      return;
+    }
+
+    const confirmDelete = window.confirm(
+      "Remove this product from the boutique?"
+    );
+    if (!confirmDelete) {
+      return;
+    }
+
+    setManagementFeedback({ state: "idle", message: "" });
+
+    try {
+      const { data } = await apiClient.delete(`/api/products/${productId}`);
+      setProducts((prev) => prev.filter((product) => product.id !== productId));
+      setManagementFeedback({
+        state: "success",
+        message: data?.message ?? "Product removed successfully.",
+      });
+
+      if (editingProductId === productId) {
+        setFormMode("create");
+        setEditingProductId(null);
+        setFormValues(initialFormState);
+        setFormStatus("idle");
+        setFormFeedback("");
+        setShowUploadForm(false);
+      }
+    } catch (err) {
+      const message =
+        err.response?.data?.message ??
+        "We could not remove this item. Please try again.";
+      setManagementFeedback({
+        state: "error",
+        message,
+      });
+    }
+  };
+
+  const canManageProduct = (product) => {
+    if (!isAuthenticated) {
+      return false;
+    }
+
+    if (isAdmin) {
+      return true;
+    }
+
+    if (roleKey !== "seller") {
+      return false;
+    }
+
+    const owner = product?.created_by
+      ? product.created_by.trim().toLowerCase()
+      : "";
+    return owner && owner === normalizedEmail;
   };
 
   return (
@@ -162,7 +310,11 @@ const Products = () => {
               className="button button--gradient"
               onClick={handleToggleUpload}
             >
-              {showUploadForm ? "Close Upload" : "Add Product"}
+              {showUploadForm
+                ? formMode === "edit"
+                  ? "Cancel Editing"
+                  : "Close Upload"
+                : "Add Product"}
             </button>
           </div>
         )}
@@ -238,8 +390,24 @@ const Products = () => {
                 className="button button--gradient"
                 disabled={formStatus === "loading"}
               >
-                {formStatus === "loading" ? "Uploading..." : "Upload Product"}
+                {formStatus === "loading"
+                  ? formMode === "edit"
+                    ? "Saving..."
+                    : "Uploading..."
+                  : formMode === "edit"
+                  ? "Save Changes"
+                  : "Upload Product"}
               </button>
+              {formMode === "edit" && (
+                <button
+                  type="button"
+                  className="button button--outline"
+                  onClick={handleCancelEdit}
+                  disabled={formStatus === "loading"}
+                >
+                  Cancel
+                </button>
+              )}
             </div>
             {formFeedback && (
               <p
@@ -267,6 +435,19 @@ const Products = () => {
 
       {status === "success" && (
         <section className="products-showcase">
+          {managementFeedback.message && (
+            <p
+              className={`form-feedback products-showcase__feedback${
+                managementFeedback.state === "error"
+                  ? " form-feedback--error"
+                  : managementFeedback.state === "success"
+                  ? " form-feedback--success"
+                  : ""
+              }`}
+            >
+              {managementFeedback.message}
+            </p>
+          )}
           <header className="products-showcase__intro">
             <h2>Curated For Lime Enthusiasts</h2>
             <p>
@@ -317,6 +498,24 @@ const Products = () => {
                         Add to Cart
                       </button>
                     </div>
+                    {canManageProduct(product) && (
+                      <div className="product-card__actions">
+                        <button
+                          type="button"
+                          className="product-card__action"
+                          onClick={() => handleEditProduct(product)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="product-card__action product-card__action--danger"
+                          onClick={() => handleDeleteProduct(product.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </article>
               );

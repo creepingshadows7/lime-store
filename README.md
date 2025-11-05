@@ -1,1 +1,1 @@
-v1.3 Role Seller and Store uploads enabled
+v1.3.1 Edit and delete store offers
