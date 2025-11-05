@@ -1,1 +1,1 @@
-v1.3.4. Currency changed to EUR, Store Text UI changes
+v1.3.5 Multiple photo uploads for products, minor UI changes

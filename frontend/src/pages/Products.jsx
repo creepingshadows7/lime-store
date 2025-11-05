@@ -25,27 +25,49 @@ const Products = () => {
     state: "idle",
     message: "",
   });
-  const [selectedImageFile, setSelectedImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState("");
-  const previousPreviewRef = useRef("");
+  const [selectedImageFiles, setSelectedImageFiles] = useState([]);
+  const [imagePreviews, setImagePreviews] = useState([]);
+  const previousPreviewsRef = useRef([]);
+  const [existingImages, setExistingImages] = useState([]);
+  const [expandedProductId, setExpandedProductId] = useState(null);
+  const [expandedImageIndex, setExpandedImageIndex] = useState(0);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
     return () => {
-      const previous = previousPreviewRef.current;
-      if (previous && previous.startsWith("blob:")) {
-        URL.revokeObjectURL(previous);
-      }
+      const previous = Array.isArray(previousPreviewsRef.current)
+        ? previousPreviewsRef.current
+        : previousPreviewsRef.current
+        ? [previousPreviewsRef.current]
+        : [];
+      previous.forEach((preview) => {
+        if (typeof preview === "string" && preview.startsWith("blob:")) {
+          URL.revokeObjectURL(preview);
+        }
+      });
     };
   }, []);
 
-  const updateImagePreview = (nextPreview) => {
-    const previous = previousPreviewRef.current;
-    if (previous && previous.startsWith("blob:") && previous !== nextPreview) {
-      URL.revokeObjectURL(previous);
-    }
-    previousPreviewRef.current = nextPreview;
-    setImagePreview(nextPreview);
+  const updateImagePreviews = (nextPreviews) => {
+    const normalizedNext = Array.isArray(nextPreviews) ? nextPreviews : [];
+    const previous = Array.isArray(previousPreviewsRef.current)
+      ? previousPreviewsRef.current
+      : previousPreviewsRef.current
+      ? [previousPreviewsRef.current]
+      : [];
+
+    previous.forEach((preview) => {
+      if (
+        typeof preview === "string" &&
+        preview.startsWith("blob:") &&
+        !normalizedNext.includes(preview)
+      ) {
+        URL.revokeObjectURL(preview);
+      }
+    });
+
+    previousPreviewsRef.current = normalizedNext;
+    setImagePreviews(normalizedNext);
   };
 
   const normalizedEmail = profile?.email
@@ -69,8 +91,9 @@ const Products = () => {
       setFormValues(initialFormState);
       setFormStatus("idle");
       setFormFeedback("");
-      setSelectedImageFile(null);
-      updateImagePreview("");
+      setSelectedImageFiles([]);
+      updateImagePreviews([]);
+      setExistingImages([]);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -107,6 +130,10 @@ const Products = () => {
     };
   }, []);
 
+  useEffect(() => {
+    setExpandedImageIndex(0);
+  }, [expandedProductId]);
+
   const handleToggleUpload = () => {
     setShowUploadForm((prev) => {
       const next = !prev;
@@ -124,8 +151,9 @@ const Products = () => {
         setFormStatus("idle");
         setFormFeedback("");
       }
-      setSelectedImageFile(null);
-      updateImagePreview("");
+      setExistingImages([]);
+      setSelectedImageFiles([]);
+      updateImagePreviews([]);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -142,16 +170,105 @@ const Products = () => {
     setFormFeedback("");
   };
 
-  const handleImageChange = (event) => {
-    const file = event.target.files?.[0] ?? null;
-    setSelectedImageFile(file);
-    if (file) {
-      updateImagePreview(URL.createObjectURL(file));
-    } else {
-      updateImagePreview("");
-    }
+  const handleImagesChange = (event) => {
+    const files = Array.from(event.target.files ?? []);
+    const imageFiles = files.filter((file) => file && file.type?.startsWith("image/"));
+    setSelectedImageFiles(imageFiles);
+    const previews = imageFiles.map((file) => URL.createObjectURL(file));
+    updateImagePreviews(previews);
     setFormStatus("idle");
     setFormFeedback("");
+  };
+
+  const buildExistingImageState = (product) => {
+    if (!product) {
+      return [];
+    }
+
+    const urls = Array.isArray(product.image_urls)
+      ? product.image_urls
+      : product.image_url
+      ? [product.image_url]
+      : [];
+
+    const filenames = Array.isArray(product.image_filenames)
+      ? product.image_filenames
+      : product.image_filename
+      ? [product.image_filename]
+      : [];
+
+    return urls.map((url, index) => {
+      const normalizedUrl = typeof url === "string" ? url : "";
+      const filenameCandidate =
+        filenames[index] ??
+        filenames.find(
+          (name) =>
+            name && typeof normalizedUrl === "string" && normalizedUrl.includes(name)
+        ) ??
+        "";
+      return {
+        url: normalizedUrl,
+        filename: filenameCandidate,
+        keep: true,
+        removable: Boolean(filenameCandidate),
+      };
+    });
+  };
+
+  const handleExistingImageToggle = (index) => {
+    setExistingImages((prev) =>
+      prev.map((image, currentIndex) => {
+        if (currentIndex !== index) {
+          return image;
+        }
+        if (!image.removable) {
+          return image;
+        }
+        return { ...image, keep: !image.keep };
+      })
+    );
+    setFormStatus("idle");
+    setFormFeedback("");
+  };
+
+  const handleCardToggle = (productId) => {
+    setExpandedProductId((current) =>
+      current === productId ? null : productId
+    );
+  };
+
+  const handleCardKeyDown = (event, productId) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleCardToggle(productId);
+    }
+  };
+
+  const handlePreviewSelect = (event, index, total) => {
+    event.stopPropagation();
+    if (Number.isInteger(index) && index >= 0 && index < total) {
+      setExpandedImageIndex(index);
+    }
+  };
+
+  const formatPublishedDate = (value) => {
+    if (!value) {
+      return "";
+    }
+
+    try {
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) {
+        return "";
+      }
+      return parsed.toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+    } catch (error) {
+      return "";
+    }
   };
 
   const handleUpload = async (event) => {
@@ -165,6 +282,9 @@ const Products = () => {
     const description = formValues.description.trim();
     const cleanedPrice = formValues.price.trim();
     const isEditMode = formMode === "edit" && editingProductId;
+    const retainedFilenames = existingImages
+      .filter((image) => image.keep && image.filename)
+      .map((image) => image.filename);
 
     if (name.length < 3) {
       setFormStatus("error");
@@ -172,9 +292,15 @@ const Products = () => {
       return;
     }
 
-    if (!selectedImageFile && !isEditMode) {
+    const hasUploads = selectedImageFiles.length > 0;
+    const hasImagesToKeep = retainedFilenames.length > 0;
+    if (!hasUploads && (!isEditMode || !hasImagesToKeep)) {
       setFormStatus("error");
-      setFormFeedback("Please upload an image for this product.");
+      setFormFeedback(
+        isEditMode
+          ? "Keep at least one existing photo or upload new imagery."
+          : "Please upload at least one image for this product."
+      );
       return;
     }
 
@@ -193,8 +319,11 @@ const Products = () => {
     formData.append("name", name);
     formData.append("price", numericPrice.toString());
     formData.append("description", description);
-    if (selectedImageFile) {
-      formData.append("image", selectedImageFile);
+    selectedImageFiles.forEach((file) => {
+      formData.append("images", file);
+    });
+    if (isEditMode) {
+      formData.append("retain_images", JSON.stringify(retainedFilenames));
     }
 
     const config = {
@@ -228,8 +357,9 @@ const Products = () => {
         setEditingProductId(null);
         setShowUploadForm(false);
         setFormValues(initialFormState);
-        setSelectedImageFile(null);
-        updateImagePreview("");
+        setExistingImages([]);
+        setSelectedImageFiles([]);
+        updateImagePreviews([]);
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
@@ -247,8 +377,9 @@ const Products = () => {
           state: "success",
           message: data?.message ?? "Product added successfully.",
         });
-        setSelectedImageFile(null);
-        updateImagePreview("");
+        setExistingImages([]);
+        setSelectedImageFiles([]);
+        updateImagePreviews([]);
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
@@ -279,10 +410,11 @@ const Products = () => {
       price: product.price ?? "",
       description: product.description ?? "",
     });
+    setExistingImages(buildExistingImageState(product));
     setFormStatus("idle");
     setFormFeedback("");
-    setSelectedImageFile(null);
-    updateImagePreview(product.image_url ?? "");
+    setSelectedImageFiles([]);
+    updateImagePreviews([]);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -296,8 +428,9 @@ const Products = () => {
     setFormFeedback("");
     setShowUploadForm(false);
     setManagementFeedback({ state: "idle", message: "" });
-    setSelectedImageFile(null);
-    updateImagePreview("");
+    setExistingImages([]);
+    setSelectedImageFiles([]);
+    updateImagePreviews([]);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -325,6 +458,10 @@ const Products = () => {
         message: data?.message ?? "Product removed successfully.",
       });
 
+      if (expandedProductId === productId) {
+        setExpandedProductId(null);
+      }
+
       if (editingProductId === productId) {
         setFormMode("create");
         setEditingProductId(null);
@@ -332,8 +469,9 @@ const Products = () => {
         setFormStatus("idle");
         setFormFeedback("");
         setShowUploadForm(false);
-        setSelectedImageFile(null);
-        updateImagePreview("");
+        setExistingImages([]);
+        setSelectedImageFiles([]);
+        updateImagePreviews([]);
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
@@ -438,26 +576,87 @@ const Products = () => {
                 />
               </label>
               <label className="input-group">
-                <span>Product Image</span>
+                <span>Product Images</span>
                 <input
-                  id="product-image"
-                  name="image"
+                  id="product-images"
+                  name="images"
                   type="file"
                   accept="image/*"
                   ref={fileInputRef}
-                  onChange={handleImageChange}
+                  onChange={handleImagesChange}
+                  multiple
                   required={formMode === "create"}
                 />
                 <span className="input-hint">
                   {formMode === "edit"
-                    ? "Choose a new file to replace the current image."
-                    : "Upload a high-quality photo (PNG, JPG, JPEG, GIF, or WEBP)."}
+                    ? "Add new photos or leave this empty to keep the current gallery."
+                    : "Upload one or more high-quality photos (PNG, JPG, JPEG, GIF, or WEBP)."}
                 </span>
               </label>
             </div>
-            {imagePreview && (
+            {(existingImages.length > 0 || imagePreviews.length > 0) && (
               <div className="product-upload__preview">
-                <img src={imagePreview} alt="Selected product preview" />
+                {existingImages.length > 0 && (
+                  <div className="product-upload__preview-group">
+                    <div className="product-upload__preview-header">
+                      <span>Current Gallery</span>
+                      {existingImages.some((image) => image.removable) && (
+                        <span className="product-upload__preview-hint">
+                          Click an image to toggle whether it stays published.
+                        </span>
+                      )}
+                    </div>
+                    <div className="product-upload__preview-grid">
+                      {existingImages.map((image, index) => (
+                        <button
+                          type="button"
+                          key={image.filename || image.url || index}
+                          className={`product-upload__preview-item${
+                            image.keep ? "" : " product-upload__preview-item--removed"
+                          }${
+                            image.removable
+                              ? ""
+                              : " product-upload__preview-item--locked"
+                          }`}
+                          onClick={() => handleExistingImageToggle(index)}
+                          disabled={!image.removable}
+                        >
+                          <img
+                            src={image.url}
+                            alt={`Existing product image ${index + 1}`}
+                          />
+                          <span className="product-upload__preview-toggle">
+                            {image.removable
+                              ? image.keep
+                                ? "Keeping"
+                                : "Removed"
+                              : "Locked"}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {imagePreviews.length > 0 && (
+                  <div className="product-upload__preview-group">
+                    <div className="product-upload__preview-header">
+                      <span>New Uploads</span>
+                    </div>
+                    <div className="product-upload__preview-grid">
+                      {imagePreviews.map((preview, index) => (
+                        <div
+                          key={`${preview}-${index}`}
+                          className="product-upload__preview-item product-upload__preview-item--new"
+                        >
+                          <img
+                            src={preview}
+                            alt={`Selected upload ${index + 1}`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             <label className="input-group product-upload__description">
@@ -559,20 +758,49 @@ const Products = () => {
                 product.description && product.description.trim().length > 0
                   ? product.description
                   : "Awaiting tasting notes from our artisans.";
+              const imageUrls = [
+                ...(Array.isArray(product.image_urls) ? product.image_urls : []),
+                ...(product.image_url ? [product.image_url] : []),
+              ]
+                .map((url) => (typeof url === "string" ? url.trim() : ""))
+                .filter((url, index, self) => url && self.indexOf(url) === index);
+              const totalImages = imageUrls.length;
+              const isExpanded = expandedProductId === product.id;
+              const activeImageIndex =
+                isExpanded && expandedImageIndex < totalImages
+                  ? expandedImageIndex
+                  : 0;
+              const primaryImageUrl = imageUrls[activeImageIndex] ?? "";
+              const createdAtLabel = formatPublishedDate(product.created_at);
 
               return (
-                <article key={product.id} className="product-card product-card--elevated">
+                <article
+                  key={product.id}
+                  className={`product-card product-card--elevated product-card--expandable${
+                    isExpanded ? " product-card--expanded" : ""
+                  }`}
+                  onClick={() => handleCardToggle(product.id)}
+                  onKeyDown={(event) => handleCardKeyDown(event, product.id)}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={isExpanded}
+                >
                   <div className="product-card__media">
-                    {product.image_url ? (
+                    {primaryImageUrl ? (
                       <img
-                        src={product.image_url}
-                        alt={product.name}
+                        src={primaryImageUrl}
+                        alt={`${product.name} preview ${activeImageIndex + 1}`}
                         loading="lazy"
                       />
                     ) : (
                       <div className="product-card__placeholder">
                         Lime Atelier
                       </div>
+                    )}
+                    {totalImages > 1 && (
+                      <span className="product-card__image-count">
+                        {totalImages} photos
+                      </span>
                     )}
                   </div>
                   <div className="product-card__content">
@@ -583,11 +811,52 @@ const Products = () => {
                       </span>
                     </div>
                     <p className="product-card__description">{description}</p>
+                    {isExpanded && totalImages > 1 && (
+                      <div className="product-card__gallery">
+                        <div className="product-card__thumbnails">
+                          {imageUrls.map((imageUrl, index) => (
+                            <button
+                              type="button"
+                              key={`${product.id}-thumbnail-${index}`}
+                              className={`product-card__thumbnail${
+                                index === activeImageIndex
+                                  ? " product-card__thumbnail--active"
+                                  : ""
+                              }`}
+                              onClick={(event) =>
+                                handlePreviewSelect(event, index, totalImages)
+                              }
+                            >
+                              <img
+                                src={imageUrl}
+                                alt={`${product.name} thumbnail ${index + 1}`}
+                                loading="lazy"
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {isExpanded && (
+                      <dl className="product-card__details">
+                        {createdAtLabel && (
+                          <div>
+                            <dt>Published</dt>
+                            <dd>{createdAtLabel}</dd>
+                          </div>
+                        )}
+                        <div>
+                          <dt>Photos</dt>
+                          <dd>{totalImages}</dd>
+                        </div>
+                      </dl>
+                    )}
                     <div className="product-card__footer">
                       <span className="product-card__price">{priceLabel}</span>
                       <button
                         type="button"
                         className="button button--outline product-card__button"
+                        onClick={(event) => event.stopPropagation()}
                       >
                         Add to Cart
                       </button>
@@ -597,14 +866,20 @@ const Products = () => {
                         <button
                           type="button"
                           className="product-card__action"
-                          onClick={() => handleEditProduct(product)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleEditProduct(product);
+                          }}
                         >
                           Edit
                         </button>
                         <button
                           type="button"
                           className="product-card__action product-card__action--danger"
-                          onClick={() => handleDeleteProduct(product.id)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleDeleteProduct(product.id);
+                          }}
                         >
                           Delete
                         </button>

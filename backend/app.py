@@ -1,6 +1,7 @@
+import json
 import os
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 from urllib.parse import urljoin
 
@@ -141,14 +142,34 @@ def create_app() -> Flask:
         timestamp = datetime.utcnow()
         documents = []
         for product in seed_products:
+            seed_filenames: List[str] = []
+            if isinstance(product.get("image_filenames"), list):
+                seed_filenames = [
+                    str(filename) for filename in product["image_filenames"] if filename
+                ]
+            elif product.get("image_filename"):
+                seed_filenames = [str(product.get("image_filename"))]
+
             documents.append(
                 {
                     "name": product.get("name", ""),
                     "price": float(product.get("price", 0) or 0),
                     "description": product.get("description", ""),
-                    "image_filename": product.get("image_filename"),
                     "created_at": timestamp,
                     "created_by": DEFAULT_ADMIN_EMAIL,
+                    **(
+                        {
+                            "image_filenames": seed_filenames,
+                            "image_filename": seed_filenames[0],
+                        }
+                        if seed_filenames
+                        else {}
+                    ),
+                    **(
+                        {"image_url": product.get("image_url")}
+                        if product.get("image_url")
+                        else {}
+                    ),
                 }
             )
 
@@ -188,11 +209,33 @@ def create_app() -> Flask:
 
         return unique_filename, None
 
-    def remove_product_image(filename: Optional[str]):
+    def save_product_images(image_files):
+        saved_filenames: List[str] = []
+        if not image_files:
+            return saved_filenames, None
+
+        for image_file in image_files:
+            if not image_file or not getattr(image_file, "filename", ""):
+                continue
+            new_filename, image_error = save_product_image(image_file)
+            if image_error:
+                for filename in saved_filenames:
+                    remove_product_image(filename)
+                return [], image_error
+            saved_filenames.append(new_filename)
+
+        return saved_filenames, None
+
+    def remove_product_image(filename):
         if not filename:
             return
 
-        target = os.path.join(app.config["PRODUCT_UPLOAD_FOLDER"], filename)
+        if isinstance(filename, (list, tuple, set)):
+            for item in filename:
+                remove_product_image(item)
+            return
+
+        target = os.path.join(app.config["PRODUCT_UPLOAD_FOLDER"], str(filename))
         try:
             os.remove(target)
         except FileNotFoundError:
@@ -207,15 +250,42 @@ def create_app() -> Flask:
         except (TypeError, ValueError):
             price_value = 0.0
 
-        image_url = ""
+        raw_filenames = product_document.get("image_filenames")
+        image_filenames: List[str] = []
+        if isinstance(raw_filenames, list):
+            image_filenames = [str(filename) for filename in raw_filenames if filename]
+
         image_filename = product_document.get("image_filename")
         if image_filename:
-            relative_path = f"uploads/{image_filename}"
-            image_url = urljoin(request.host_url, relative_path)
-        else:
-            legacy_url = product_document.get("image_url")
-            if legacy_url:
-                image_url = legacy_url
+            normalized_filename = str(image_filename)
+            if normalized_filename not in image_filenames:
+                image_filenames.insert(0, normalized_filename)
+
+        image_urls: List[str] = []
+        seen_urls = set()
+
+        def append_url(url: Optional[str]) -> None:
+            if not url:
+                return
+            if url in seen_urls:
+                return
+            image_urls.append(url)
+            seen_urls.add(url)
+
+        for filename in image_filenames:
+            relative_path = f"uploads/{filename}"
+            append_url(urljoin(request.host_url, relative_path))
+
+        legacy_urls = product_document.get("image_urls")
+        if isinstance(legacy_urls, list):
+            for url in legacy_urls:
+                append_url(str(url))
+
+        legacy_url = product_document.get("image_url")
+        if legacy_url:
+            append_url(str(legacy_url))
+
+        primary_image_url = image_urls[0] if image_urls else ""
 
         owner_email = normalize_email(product_document.get("created_by"))
         owner_name = ""
@@ -233,7 +303,9 @@ def create_app() -> Flask:
             "name": product_document.get("name", ""),
             "price": f"{price_value:.2f}",
             "description": product_document.get("description", ""),
-            "image_url": image_url,
+            "image_url": primary_image_url,
+            "image_urls": image_urls,
+            "image_filenames": image_filenames,
             "created_at": created_at.isoformat()
             if isinstance(created_at, datetime)
             else None,
@@ -474,7 +546,13 @@ def create_app() -> Flask:
         name = str(payload.get("name", "")).strip()
         description = str(payload.get("description", "")).strip()
         raw_price = payload.get("price", "")
-        image_file = request.files.get("image") if request.files else None
+        image_files = []
+        if request.files:
+            image_files = request.files.getlist("images")
+            if not image_files:
+                fallback_file = request.files.get("image")
+                if fallback_file:
+                    image_files = [fallback_file]
 
         if not name:
             return jsonify({"message": "A product name is required."}), 400
@@ -487,9 +565,12 @@ def create_app() -> Flask:
         if price_value <= 0:
             return jsonify({"message": "Price must be greater than zero."}), 400
 
-        saved_filename, image_error = save_product_image(image_file)
+        saved_filenames, image_error = save_product_images(image_files)
         if image_error:
             return jsonify({"message": image_error}), 400
+
+        if not saved_filenames:
+            return jsonify({"message": "Please upload at least one image for this product."}), 400
 
         product_document = {
             "name": name,
@@ -497,7 +578,8 @@ def create_app() -> Flask:
             "price": price_value,
             "created_at": datetime.utcnow(),
             "created_by": normalize_email(current_user.get("email")),
-            "image_filename": saved_filename,
+            "image_filenames": saved_filenames,
+            "image_filename": saved_filenames[0],
         }
 
         result = db.products.insert_one(product_document)
@@ -534,10 +616,55 @@ def create_app() -> Flask:
         if not payload and request.is_json:
             payload = request.get_json(silent=True) or {}
 
-        image_file = request.files.get("image") if request.files else None
+        incoming_files = []
+        if request.files:
+            incoming_files = request.files.getlist("images")
+            if not incoming_files:
+                fallback_file = request.files.get("image")
+                if fallback_file:
+                    incoming_files = [fallback_file]
+
         updates: Dict[str, object] = {}
-        previous_image_filename = product_document.get("image_filename")
-        remove_previous_image = False
+
+        existing_filenames: List[str] = []
+        raw_existing = product_document.get("image_filenames")
+        if isinstance(raw_existing, list):
+            existing_filenames = [
+                str(filename) for filename in raw_existing if filename
+            ]
+        legacy_filename = product_document.get("image_filename")
+        if legacy_filename:
+            normalized_legacy = str(legacy_filename)
+            if normalized_legacy not in existing_filenames:
+                existing_filenames.insert(0, normalized_legacy)
+
+        retain_explicit = False
+        retain_field_value = None
+        if "retain_images" in payload:
+            retain_explicit = True
+            retain_field_value = payload.get("retain_images")
+        elif "retain_image_filenames" in payload:
+            retain_explicit = True
+            retain_field_value = payload.get("retain_image_filenames")
+
+        retained_filenames: List[str] = []
+        if retain_explicit:
+            try:
+                parsed_value = json.loads(retain_field_value) if retain_field_value else []
+            except (json.JSONDecodeError, TypeError):
+                return jsonify({"message": "We could not understand the retained image list."}), 400
+
+            if not isinstance(parsed_value, list):
+                return jsonify({"message": "We could not understand the retained image list."}), 400
+
+            for item in parsed_value:
+                normalized = str(item)
+                if normalized in existing_filenames and normalized not in retained_filenames:
+                    retained_filenames.append(normalized)
+        else:
+            retained_filenames = list(existing_filenames)
+
+        removed_filenames: List[str] = []
 
         if "name" in payload:
             name_value = str(payload.get("name", "")).strip()
@@ -558,12 +685,36 @@ def create_app() -> Flask:
                 return jsonify({"message": "Price must be greater than zero."}), 400
             updates["price"] = price_value
 
-        if image_file and getattr(image_file, "filename", ""):
-            new_filename, image_error = save_product_image(image_file)
-            if image_error:
-                return jsonify({"message": image_error}), 400
-            updates["image_filename"] = new_filename
-            remove_previous_image = True
+        saved_new_filenames, image_error = save_product_images(incoming_files)
+        if image_error:
+            return jsonify({"message": image_error}), 400
+
+        def unique_preserve(items: List[str]) -> List[str]:
+            seen = set()
+            result: List[str] = []
+            for item in items:
+                if not item or item in seen:
+                    continue
+                seen.add(item)
+                result.append(item)
+            return result
+
+        next_filenames = unique_preserve(retained_filenames + saved_new_filenames)
+
+        if not next_filenames:
+            if saved_new_filenames:
+                remove_product_image(saved_new_filenames)
+            return jsonify({"message": "Please provide at least one product image."}), 400
+
+        images_changed = next_filenames != existing_filenames
+
+        if images_changed:
+            retained_set = set(next_filenames)
+            removed_filenames = [
+                filename for filename in existing_filenames if filename not in retained_set
+            ]
+            updates["image_filenames"] = next_filenames
+            updates["image_filename"] = next_filenames[0]
 
         if not updates:
             return jsonify({"message": "No product changes detected."}), 400
@@ -577,8 +728,8 @@ def create_app() -> Flask:
 
         updated_product = db.products.find_one({"_id": product_document["_id"]})
 
-        if remove_previous_image and previous_image_filename != updates.get("image_filename"):
-            remove_product_image(previous_image_filename)
+        if removed_filenames:
+            remove_product_image(removed_filenames)
 
         return jsonify(
             {
@@ -605,7 +756,17 @@ def create_app() -> Flask:
             )
 
         db.products.delete_one({"_id": product_document["_id"]})
-        remove_product_image(product_document.get("image_filename"))
+        stored_filenames: List[str] = []
+        raw_filenames = product_document.get("image_filenames")
+        if isinstance(raw_filenames, list):
+            stored_filenames.extend(str(filename) for filename in raw_filenames if filename)
+        legacy_filename = product_document.get("image_filename")
+        if legacy_filename:
+            normalized_legacy = str(legacy_filename)
+            if normalized_legacy not in stored_filenames:
+                stored_filenames.append(normalized_legacy)
+
+        remove_product_image(stored_filenames)
 
         return jsonify({"message": "Product removed successfully."})
 
