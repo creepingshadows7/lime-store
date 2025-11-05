@@ -1,1 +1,1 @@
-v1.3.3 Updated picture system for store items
+v1.3.4. Currency changed to EUR, Store Text UI changes

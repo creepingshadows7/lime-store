@@ -200,7 +200,7 @@ def create_app() -> Flask:
         except OSError:
             return
 
-    def serialize_product(product_document):
+    def serialize_product(product_document, user_names=None):
         created_at = product_document.get("created_at")
         try:
             price_value = float(product_document.get("price", 0) or 0)
@@ -217,6 +217,17 @@ def create_app() -> Flask:
             if legacy_url:
                 image_url = legacy_url
 
+        owner_email = normalize_email(product_document.get("created_by"))
+        owner_name = ""
+        if user_names and owner_email in user_names:
+            owner_name = user_names.get(owner_email, "") or ""
+        elif owner_email:
+            user_document = db.users.find_one({"email": owner_email})
+            if user_document:
+                owner_name = user_document.get("name", "") or ""
+        if not owner_name and owner_email == DEFAULT_ADMIN_EMAIL:
+            owner_name = DEFAULT_ADMIN_NAME
+
         return {
             "id": str(product_document.get("_id")),
             "name": product_document.get("name", ""),
@@ -226,7 +237,8 @@ def create_app() -> Flask:
             "created_at": created_at.isoformat()
             if isinstance(created_at, datetime)
             else None,
-            "created_by": product_document.get("created_by", ""),
+            "created_by": owner_email,
+            "created_by_name": owner_name,
         }
 
     def fetch_product(product_id: str):
@@ -427,8 +439,25 @@ def create_app() -> Flask:
     @app.route("/api/products", methods=["GET"])
     def list_products():
         ensure_seed_products()
-        product_docs = db.products.find().sort("created_at", -1)
-        products = [serialize_product(document) for document in product_docs]
+        product_docs = list(db.products.find().sort("created_at", -1))
+
+        author_emails = {
+            normalize_email(document.get("created_by"))
+            for document in product_docs
+            if document.get("created_by")
+        }
+        user_names: Dict[str, str] = {}
+        if author_emails:
+            for user_document in db.users.find({"email": {"$in": list(author_emails)}}):
+                normalized_email = normalize_email(user_document.get("email"))
+                if normalized_email:
+                    user_names[normalized_email] = user_document.get("name", "") or ""
+        if DEFAULT_ADMIN_EMAIL in author_emails:
+            user_names.setdefault(DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_NAME)
+
+        products = [
+            serialize_product(document, user_names=user_names) for document in product_docs
+        ]
         return jsonify({"products": products})
 
     @app.route("/api/products", methods=["POST"])

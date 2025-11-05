@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
+import { formatEuro } from "../utils/currency";
 
 const initialFormState = {
   name: "",
@@ -105,15 +106,6 @@ const Products = () => {
       isMounted = false;
     };
   }, []);
-
-  const formatPrice = (value) => {
-    const parsed =
-      typeof value === "number" ? value : Number.parseFloat(String(value));
-    if (Number.isFinite(parsed)) {
-      return parsed.toFixed(2);
-    }
-    return "0.00";
-  };
 
   const handleToggleUpload = () => {
     setShowUploadForm((prev) => {
@@ -552,10 +544,17 @@ const Products = () => {
           </header>
           <div className="product-grid product-grid--elevated">
             {products.map((product) => {
-              const priceLabel = formatPrice(product.price);
-              const createdBy = product.created_by
-                ? product.created_by.split("@")[0]
-                : "Lime Atelier";
+              const priceLabel = formatEuro(product.price);
+              const rawPublisherName =
+                typeof product.created_by_name === "string"
+                  ? product.created_by_name.trim()
+                  : "";
+              const publisherName =
+                rawPublisherName.length > 0
+                  ? rawPublisherName
+                  : product.created_by
+                  ? product.created_by.split("@")[0]
+                  : "Lime Atelier";
               const description =
                 product.description && product.description.trim().length > 0
                   ? product.description
@@ -580,12 +579,12 @@ const Products = () => {
                     <div className="product-card__header">
                       <h3 className="product-card__name">{product.name}</h3>
                       <span className="product-card__creator">
-                        Crafted by {createdBy}
+                        Published by {publisherName}
                       </span>
                     </div>
                     <p className="product-card__description">{description}</p>
                     <div className="product-card__footer">
-                      <span className="product-card__price">${priceLabel}</span>
+                      <span className="product-card__price">{priceLabel}</span>
                       <button
                         type="button"
                         className="button button--outline product-card__button"

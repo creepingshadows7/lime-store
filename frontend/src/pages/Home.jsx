@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import apiClient from "../api/client";
+import { formatEuro } from "../utils/currency";
 
 const Home = () => {
   const [featured, setFeatured] = useState([]);
@@ -46,7 +47,9 @@ const Home = () => {
             <article key={product.id} className="showcase-card">
               <span className="showcase-card__tag">Signature</span>
               <h2 className="showcase-card__name">{product.name}</h2>
-              <p className="showcase-card__price">${product.price}</p>
+              <p className="showcase-card__price">
+                {formatEuro(product.price)}
+              </p>
             </article>
           ))}
         </div>
