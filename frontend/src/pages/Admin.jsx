@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
+import { getProfileInitial } from "../utils/profile";
 
 const ROLE_OPTIONS = [
   { value: "admin", label: "Administrator" },
@@ -185,6 +186,9 @@ const Admin = () => {
                     typeof user.role === "string"
                       ? user.role.toLowerCase()
                       : "standard";
+                  const avatarUrl = user.avatar_url || "";
+                  const avatarInitial = getProfileInitial(user);
+                  const displayName = user.name || "--";
                   const statusEntry = userStatuses[user.id] ?? {
                     state: "idle",
                     message: "",
@@ -205,7 +209,33 @@ const Admin = () => {
 
                   return (
                     <tr key={user.id}>
-                      <td>{user.name || "--"}</td>
+                      <td>
+                        <div className="admin-table__user">
+                          <div
+                            className="admin-table__avatar"
+                            role="img"
+                            aria-label={`${displayName}'s avatar`}
+                          >
+                            {avatarUrl ? (
+                              <img
+                                src={avatarUrl}
+                                alt=""
+                                className="admin-table__avatar-image"
+                              />
+                            ) : (
+                              <span
+                                className="admin-table__avatar-fallback"
+                                aria-hidden="true"
+                              >
+                                {avatarInitial}
+                              </span>
+                            )}
+                          </div>
+                          <span className="admin-table__user-name">
+                            {displayName}
+                          </span>
+                        </div>
+                      </td>
                       <td>{user.email || "--"}</td>
                       <td>{user.phone || "--"}</td>
                       <td>{joinedDate}</td>

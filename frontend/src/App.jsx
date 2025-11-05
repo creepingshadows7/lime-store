@@ -11,6 +11,7 @@ import Admin from "./pages/Admin";
 import "./App.css";
 import { useAuth } from "./context/AuthContext";
 import { DEFAULT_ADMIN_EMAIL } from "./constants";
+import { getProfileInitial } from "./utils/profile";
 
 const App = () => {
   const { isAuthenticated, profile, logout } = useAuth();
@@ -43,6 +44,8 @@ const App = () => {
     (profile?.name && profile.name.trim()) ||
     (profile?.email && profile.email.trim()) ||
     "Guest";
+  const avatarUrl = profile?.avatar_url ?? "";
+  const avatarInitial = getProfileInitial(profile);
 
   return (
     <div className="app-shell">
@@ -71,6 +74,23 @@ const App = () => {
         <div className="lux-header__account">
           {isAuthenticated ? (
             <div className="account-chip">
+              <div
+                className="account-chip__avatar"
+                role="img"
+                aria-label={`${accountLabel}'s avatar`}
+              >
+                {avatarUrl ? (
+                  <img
+                    src={avatarUrl}
+                    alt=""
+                    className="account-chip__avatar-image"
+                  />
+                ) : (
+                  <span className="account-chip__avatar-fallback">
+                    {avatarInitial}
+                  </span>
+                )}
+              </div>
               <span className="account-chip__name">{accountLabel}</span>
               <button
                 type="button"

@@ -1,1 +1,1 @@
-v1.4 Store UI Overhaul with dynamic editing and new interface 
+v1.4.1 Users can now add/change/remove Profile Pictures

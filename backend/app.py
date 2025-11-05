@@ -243,6 +243,28 @@ def create_app() -> Flask:
         except OSError:
             return
 
+    def build_upload_url(filename: Optional[str]) -> str:
+        if not filename:
+            return ""
+
+        sanitized = str(filename).strip()
+        if not sanitized:
+            return ""
+
+        return urljoin(request.host_url, f"uploads/{sanitized}")
+
+    def serialize_user_profile(user_document) -> Dict[str, str]:
+        if not user_document:
+            return {}
+
+        return {
+            "name": user_document.get("name", "") or "",
+            "email": user_document.get("email", "") or "",
+            "phone": user_document.get("phone", "") or "",
+            "role": get_user_role(user_document),
+            "avatar_url": build_upload_url(user_document.get("avatar_filename")),
+        }
+
     def serialize_product(product_document, user_names=None):
         created_at = product_document.get("created_at")
         try:
@@ -416,12 +438,7 @@ def create_app() -> Flask:
             user = db.users.find_one({"_id": user["_id"]})
 
         token = create_access_token(identity=email)
-        user_profile = {
-            "name": user.get("name", ""),
-            "email": user["email"],
-            "phone": user.get("phone", ""),
-            "role": get_user_role(user),
-        }
+        user_profile = serialize_user_profile(user)
         return jsonify({"access_token": token, "user": user_profile})
 
     @app.route("/api/account", methods=["GET", "PUT"])
@@ -436,12 +453,7 @@ def create_app() -> Flask:
         if request.method == "GET":
             return jsonify(
                 {
-                    "user": {
-                        "name": user.get("name", ""),
-                        "email": user.get("email", ""),
-                        "phone": user.get("phone", ""),
-                        "role": get_user_role(user),
-                    }
+                    "user": serialize_user_profile(user),
                 }
             )
 
@@ -492,16 +504,94 @@ def create_app() -> Flask:
         updated_email = updates.get("email", current_email)
         updated_user = db.users.find_one({"email": updated_email})
 
-        token = create_access_token(identity=updated_email)
-        user_profile = {
-            "name": updated_user.get("name", ""),
-            "email": updated_user.get("email", ""),
-            "phone": updated_user.get("phone", ""),
-            "role": get_user_role(updated_user),
-        }
+        token = create_access_token(identity=normalize_email(updated_user.get("email")))
+        user_profile = serialize_user_profile(updated_user)
         return jsonify(
             {
                 "message": "Account updated successfully.",
+                "access_token": token,
+                "user": user_profile,
+            }
+        )
+
+    @app.route("/api/account/avatar", methods=["POST", "DELETE"])
+    @jwt_required()
+    def manage_account_avatar():
+        current_email = get_jwt_identity()
+        user = db.users.find_one({"email": current_email})
+
+        if not user:
+            return jsonify({"message": "Account not found."}), 404
+
+        if request.method == "DELETE":
+            previous_filename = user.get("avatar_filename")
+            unset_operations: Dict[str, str] = {}
+            if previous_filename:
+                remove_product_image(previous_filename)
+                unset_operations["avatar_filename"] = ""
+            if user.get("avatar_updated_at"):
+                unset_operations["avatar_updated_at"] = ""
+
+            if unset_operations:
+                db.users.update_one(
+                    {"_id": user["_id"]},
+                    {
+                        "$unset": unset_operations,
+                    },
+                )
+
+            updated_user = db.users.find_one({"_id": user["_id"]})
+            token = create_access_token(
+                identity=normalize_email(updated_user.get("email"))
+            )
+            user_profile = serialize_user_profile(updated_user)
+
+            message = (
+                "Profile picture removed successfully."
+                if previous_filename
+                else "No profile picture on record. Nothing to remove."
+            )
+
+            return jsonify(
+                {
+                    "message": message,
+                    "access_token": token,
+                    "user": user_profile,
+                }
+            )
+
+        image_file = request.files.get("avatar")
+        if not image_file or not getattr(image_file, "filename", ""):
+            return jsonify({"message": "Please choose an image to upload."}), 400
+
+        new_filename, image_error = save_product_image(image_file)
+        if image_error:
+            return jsonify({"message": image_error}), 400
+
+        previous_filename = user.get("avatar_filename")
+
+        db.users.update_one(
+            {"_id": user["_id"]},
+            {
+                "$set": {
+                    "avatar_filename": new_filename,
+                    "avatar_updated_at": datetime.utcnow(),
+                }
+            },
+        )
+
+        if previous_filename and previous_filename != new_filename:
+            remove_product_image(previous_filename)
+
+        updated_user = db.users.find_one({"_id": user["_id"]})
+        token = create_access_token(
+            identity=normalize_email(updated_user.get("email"))
+        )
+        user_profile = serialize_user_profile(updated_user)
+
+        return jsonify(
+            {
+                "message": "Profile picture updated successfully.",
                 "access_token": token,
                 "user": user_profile,
             }
@@ -856,6 +946,7 @@ def create_app() -> Flask:
                     "phone": user.get("phone", ""),
                     "role": role,
                     "created_at": created_at.isoformat() if isinstance(created_at, datetime) else None,
+                    "avatar_url": build_upload_url(user.get("avatar_filename")),
                 }
             )
 
@@ -912,6 +1003,7 @@ def create_app() -> Flask:
                     "created_at": created_at.isoformat()
                     if isinstance(created_at, datetime)
                     else None,
+                    "avatar_url": build_upload_url(updated_user.get("avatar_filename")),
                 },
             }
         )

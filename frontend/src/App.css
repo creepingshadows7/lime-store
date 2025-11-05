@@ -221,6 +221,31 @@
   box-shadow: 0 18px 35px rgba(0, 0, 0, 0.25);
 }
 
+.account-chip__avatar {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(169, 255, 124, 0.4);
+  background: rgba(13, 32, 21, 0.92);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.account-chip__avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.account-chip__avatar-fallback {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--accent-lime);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .account-chip__name {
   font-weight: 500;
   letter-spacing: 0.04em;
@@ -1112,6 +1137,144 @@
   color: rgba(226, 248, 220, 0.45);
 }
 
+.account-avatar {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1.25rem;
+  align-items: center;
+}
+
+.account-avatar__preview {
+  width: clamp(4.5rem, 6vw, 6rem);
+  height: clamp(4.5rem, 6vw, 6rem);
+  border-radius: 50%;
+  border: 1px solid rgba(169, 255, 124, 0.28);
+  background: rgba(10, 18, 16, 0.82);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  position: relative;
+}
+
+.account-avatar__image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.account-avatar__fallback {
+  font-size: clamp(1.75rem, 4vw, 2.4rem);
+  font-weight: 600;
+  color: var(--accent-lime);
+  letter-spacing: 0.08em;
+}
+
+.account-avatar__meta {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.account-avatar__title {
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(226, 248, 220, 0.78);
+}
+
+.account-avatar__hint {
+  font-size: 0.85rem;
+  color: rgba(226, 248, 220, 0.6);
+  margin: 0;
+}
+
+.account-avatar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.account-avatar__upload {
+  position: relative;
+}
+
+.account-avatar__upload input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.account-avatar__upload--disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.account-avatar__upload--disabled input {
+  cursor: not-allowed;
+}
+
+.account-avatar__reset {
+  background: transparent;
+  border: none;
+  color: rgba(226, 248, 220, 0.75);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.account-avatar__reset:hover {
+  color: var(--accent-lime);
+}
+
+.account-avatar__reset:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.account-avatar__remove {
+  background: transparent;
+  border: none;
+  color: var(--error);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.account-avatar__remove:hover {
+  color: var(--accent-lime);
+}
+
+.account-avatar__remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.account-avatar .form-feedback {
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .account-avatar {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .account-avatar__meta {
+    width: 100%;
+  }
+
+  .account-avatar__actions {
+    justify-content: center;
+  }
+}
+
 .admin-page {
   display: grid;
   gap: clamp(2rem, 5vw, 3rem);
@@ -1163,6 +1326,40 @@
   border-bottom: 1px solid rgba(169, 255, 124, 0.1);
   color: var(--text-secondary);
   vertical-align: top;
+}
+
+.admin-table__user {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.admin-table__avatar {
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 999px;
+  border: 1px solid rgba(169, 255, 124, 0.35);
+  background: rgba(13, 32, 21, 0.9);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.admin-table__avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.admin-table__avatar-fallback {
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--accent-lime);
+}
+
+.admin-table__user-name {
+  font-weight: 500;
+  color: var(--text-primary);
 }
 
 .admin-table tbody tr:last-child td {
