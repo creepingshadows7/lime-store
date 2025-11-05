@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Lime Store">
+  <rect width="256" height="256" fill="#040404"/>
+  <g transform="translate(18 20)">
+    <path d="M181.5 12.5c18.1 0 32.7 14 32.7 33.1 0 18.2-14.6 33-32.7 33h-20.8c-5.2 0-9.4-4.3-9.4-9.6 0-5.3 4.2-9.6 9.4-9.6h20.8c7.4 0 13.6-6.3 13.6-13.8 0-7.5-6.2-13.9-13.6-13.9h-20.8c-5.2 0-9.4-4.3-9.4-9.6 0-5.3 4.2-9.6 9.4-9.6z" fill="#f0f1d8"/>
+    <circle cx="104" cy="140" r="98" fill="#f0f1d8"/>
+    <circle cx="104" cy="140" r="86" fill="#6ac354"/>
+    <circle cx="104" cy="140" r="38" fill="#aae871"/>
+    <path d="M104 54v86l59-70.7A86 86 0 0 0 104 54z" fill="#d7f8a6"/>
+    <path d="M163 69.3 104 140h86a85.7 85.7 0 0 0-27-70.7z" fill="#b5f27d"/>
+    <path d="m190 140-86-86a86 86 0 0 0-41.5 16.3z" fill="#d7f8a6"/>
+    <path d="M104 140 49 69.3A86 86 0 0 0 18 140z" fill="#b5f27d"/>
+    <path d="m104 140-86 0a86 86 0 0 0 31 70.7z" fill="#d7f8a6"/>
+    <path d="m104 140-55 70.7A86 86 0 0 0 104 226z" fill="#b5f27d"/>
+    <path d="m104 140 0 86a86 86 0 0 0 41.5-16.3z" fill="#d7f8a6"/>
+    <path d="m104 140 55 70.7A86 86 0 0 0 190 140z" fill="#b5f27d"/>
+  </g>
+</svg>

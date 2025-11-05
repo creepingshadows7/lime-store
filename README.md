@@ -1,1 +1,1 @@
-v1.3.1 Edit and delete store offers
+v1.3.2 Updated Favicon and in browser site name
