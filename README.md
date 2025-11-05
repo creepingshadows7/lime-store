@@ -1,1 +1,1 @@
-v1.3.5 Multiple photo uploads for products, minor UI changes
+v1.4 Store UI Overhaul with dynamic editing and new interface 

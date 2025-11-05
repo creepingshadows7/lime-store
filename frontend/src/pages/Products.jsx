@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
 import { formatEuro } from "../utils/currency";
+import { formatPublishedDate } from "../utils/dates";
+import ProductEditor from "../components/ProductEditor";
 
 const initialFormState = {
   name: "",
@@ -10,17 +13,36 @@ const initialFormState = {
   description: "",
 };
 
+const extractApiMessage = (error, fallback) => {
+  if (error?.response?.status === 413) {
+    return "Uploads must stay under 16 MB. Please choose a smaller image.";
+  }
+
+  const data = error?.response?.data;
+  if (typeof data === "string" && data.trim()) {
+    return data.trim();
+  }
+
+  if (data && typeof data === "object") {
+    const potentialMessage = data.message || data.msg;
+    if (typeof potentialMessage === "string" && potentialMessage.trim()) {
+      return potentialMessage.trim();
+    }
+  }
+
+  return fallback;
+};
+
 const Products = () => {
-  const { isAuthenticated, profile } = useAuth();
+  const { isAuthenticated, profile, logout } = useAuth();
+  const navigate = useNavigate();
   const [products, setProducts] = useState([]);
-  const [status, setStatus] = useState("idle");
+  const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
   const [formValues, setFormValues] = useState(initialFormState);
   const [formStatus, setFormStatus] = useState("idle");
   const [formFeedback, setFormFeedback] = useState("");
   const [showUploadForm, setShowUploadForm] = useState(false);
-  const [formMode, setFormMode] = useState("create");
-  const [editingProductId, setEditingProductId] = useState(null);
   const [managementFeedback, setManagementFeedback] = useState({
     state: "idle",
     message: "",
@@ -28,17 +50,26 @@ const Products = () => {
   const [selectedImageFiles, setSelectedImageFiles] = useState([]);
   const [imagePreviews, setImagePreviews] = useState([]);
   const previousPreviewsRef = useRef([]);
-  const [existingImages, setExistingImages] = useState([]);
-  const [expandedProductId, setExpandedProductId] = useState(null);
-  const [expandedImageIndex, setExpandedImageIndex] = useState(0);
   const fileInputRef = useRef(null);
+  const [editingProductId, setEditingProductId] = useState(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const modalContainerRef = useRef(null);
+
+  const normalizedEmail = profile?.email
+    ? profile.email.trim().toLowerCase()
+    : "";
+  const roleKey = profile?.role ? profile.role.trim().toLowerCase() : "standard";
+
+  const isAdmin =
+    isAuthenticated &&
+    normalizedEmail === DEFAULT_ADMIN_EMAIL &&
+    roleKey === "admin";
+  const isSeller = isAdmin || roleKey === "seller";
 
   useEffect(() => {
     return () => {
       const previous = Array.isArray(previousPreviewsRef.current)
         ? previousPreviewsRef.current
-        : previousPreviewsRef.current
-        ? [previousPreviewsRef.current]
         : [];
       previous.forEach((preview) => {
         if (typeof preview === "string" && preview.startsWith("blob:")) {
@@ -52,8 +83,6 @@ const Products = () => {
     const normalizedNext = Array.isArray(nextPreviews) ? nextPreviews : [];
     const previous = Array.isArray(previousPreviewsRef.current)
       ? previousPreviewsRef.current
-      : previousPreviewsRef.current
-      ? [previousPreviewsRef.current]
       : [];
 
     previous.forEach((preview) => {
@@ -70,33 +99,21 @@ const Products = () => {
     setImagePreviews(normalizedNext);
   };
 
-  const normalizedEmail = profile?.email
-    ? profile.email.trim().toLowerCase()
-    : "";
-  const roleKey = profile?.role
-    ? profile.role.trim().toLowerCase()
-    : "standard";
-
-  const isAdmin =
-    isAuthenticated &&
-    normalizedEmail === DEFAULT_ADMIN_EMAIL &&
-    roleKey === "admin";
-  const isSeller = isAdmin || roleKey === "seller";
+  const resetUploadState = () => {
+    setFormValues(initialFormState);
+    setFormStatus("idle");
+    setFormFeedback("");
+    setSelectedImageFiles([]);
+    updateImagePreviews([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
 
   useEffect(() => {
     if (!isSeller) {
       setShowUploadForm(false);
-      setFormMode("create");
-      setEditingProductId(null);
-      setFormValues(initialFormState);
-      setFormStatus("idle");
-      setFormFeedback("");
-      setSelectedImageFiles([]);
-      updateImagePreviews([]);
-      setExistingImages([]);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+      resetUploadState();
     }
   }, [isSeller]);
 
@@ -131,36 +148,32 @@ const Products = () => {
   }, []);
 
   useEffect(() => {
-    setExpandedImageIndex(0);
-  }, [expandedProductId]);
+    if (!isEditModalOpen) {
+      document.body.style.removeProperty("overflow");
+      return undefined;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isEditModalOpen]);
+
+  useEffect(() => {
+    if (isEditModalOpen && modalContainerRef.current) {
+      if (typeof modalContainerRef.current.scrollTo === "function") {
+        modalContainerRef.current.scrollTo({ top: 0, behavior: "auto" });
+      } else {
+        modalContainerRef.current.scrollTop = 0;
+      }
+    }
+  }, [isEditModalOpen, editingProductId]);
 
   const handleToggleUpload = () => {
-    setShowUploadForm((prev) => {
-      const next = !prev;
-      if (!next) {
-        setFormMode("create");
-        setEditingProductId(null);
-        setFormValues(initialFormState);
-        setFormStatus("idle");
-        setFormFeedback("");
-        setManagementFeedback({ state: "idle", message: "" });
-      } else {
-        setFormMode("create");
-        setEditingProductId(null);
-        setFormValues(initialFormState);
-        setFormStatus("idle");
-        setFormFeedback("");
-      }
-      setExistingImages([]);
-      setSelectedImageFiles([]);
-      updateImagePreviews([]);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-      return next;
-    });
-    setFormStatus("idle");
-    setFormFeedback("");
+    setShowUploadForm((prev) => !prev);
+    setManagementFeedback({ state: "idle", message: "" });
+    resetUploadState();
   };
 
   const handleFieldChange = (event) => {
@@ -180,98 +193,7 @@ const Products = () => {
     setFormFeedback("");
   };
 
-  const buildExistingImageState = (product) => {
-    if (!product) {
-      return [];
-    }
-
-    const urls = Array.isArray(product.image_urls)
-      ? product.image_urls
-      : product.image_url
-      ? [product.image_url]
-      : [];
-
-    const filenames = Array.isArray(product.image_filenames)
-      ? product.image_filenames
-      : product.image_filename
-      ? [product.image_filename]
-      : [];
-
-    return urls.map((url, index) => {
-      const normalizedUrl = typeof url === "string" ? url : "";
-      const filenameCandidate =
-        filenames[index] ??
-        filenames.find(
-          (name) =>
-            name && typeof normalizedUrl === "string" && normalizedUrl.includes(name)
-        ) ??
-        "";
-      return {
-        url: normalizedUrl,
-        filename: filenameCandidate,
-        keep: true,
-        removable: Boolean(filenameCandidate),
-      };
-    });
-  };
-
-  const handleExistingImageToggle = (index) => {
-    setExistingImages((prev) =>
-      prev.map((image, currentIndex) => {
-        if (currentIndex !== index) {
-          return image;
-        }
-        if (!image.removable) {
-          return image;
-        }
-        return { ...image, keep: !image.keep };
-      })
-    );
-    setFormStatus("idle");
-    setFormFeedback("");
-  };
-
-  const handleCardToggle = (productId) => {
-    setExpandedProductId((current) =>
-      current === productId ? null : productId
-    );
-  };
-
-  const handleCardKeyDown = (event, productId) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      handleCardToggle(productId);
-    }
-  };
-
-  const handlePreviewSelect = (event, index, total) => {
-    event.stopPropagation();
-    if (Number.isInteger(index) && index >= 0 && index < total) {
-      setExpandedImageIndex(index);
-    }
-  };
-
-  const formatPublishedDate = (value) => {
-    if (!value) {
-      return "";
-    }
-
-    try {
-      const parsed = new Date(value);
-      if (Number.isNaN(parsed.getTime())) {
-        return "";
-      }
-      return parsed.toLocaleString(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
-    } catch (error) {
-      return "";
-    }
-  };
-
-  const handleUpload = async (event) => {
+  const handleCreateProduct = async (event) => {
     event.preventDefault();
 
     if (formStatus === "loading") {
@@ -280,11 +202,7 @@ const Products = () => {
 
     const name = formValues.name.trim();
     const description = formValues.description.trim();
-    const cleanedPrice = formValues.price.trim();
-    const isEditMode = formMode === "edit" && editingProductId;
-    const retainedFilenames = existingImages
-      .filter((image) => image.keep && image.filename)
-      .map((image) => image.filename);
+    const cleanedPrice = formValues.price.toString().trim();
 
     if (name.length < 3) {
       setFormStatus("error");
@@ -292,15 +210,9 @@ const Products = () => {
       return;
     }
 
-    const hasUploads = selectedImageFiles.length > 0;
-    const hasImagesToKeep = retainedFilenames.length > 0;
-    if (!hasUploads && (!isEditMode || !hasImagesToKeep)) {
+    if (selectedImageFiles.length === 0) {
       setFormStatus("error");
-      setFormFeedback(
-        isEditMode
-          ? "Keep at least one existing photo or upload new imagery."
-          : "Please upload at least one image for this product."
-      );
+      setFormFeedback("Please upload at least one image for this product.");
       return;
     }
 
@@ -319,12 +231,7 @@ const Products = () => {
     formData.append("name", name);
     formData.append("price", numericPrice.toString());
     formData.append("description", description);
-    selectedImageFiles.forEach((file) => {
-      formData.append("images", file);
-    });
-    if (isEditMode) {
-      formData.append("retain_images", JSON.stringify(retainedFilenames));
-    }
+    selectedImageFiles.forEach((file) => formData.append("images", file));
 
     const config = {
       headers: {
@@ -333,106 +240,38 @@ const Products = () => {
     };
 
     try {
-      if (isEditMode) {
-        const { data } = await apiClient.put(
-          `/api/products/${editingProductId}`,
-          formData,
-          config
-        );
-        const updatedProduct = data?.product ?? null;
-        if (updatedProduct) {
-          setProducts((prev) =>
-            prev.map((product) =>
-              product.id === editingProductId ? updatedProduct : product
-            )
-          );
-        }
-        setFormStatus("success");
-        setFormFeedback(data?.message ?? "Product updated successfully.");
-        setManagementFeedback({
-          state: "success",
-          message: data?.message ?? "Product updated successfully.",
-        });
-        setFormMode("create");
-        setEditingProductId(null);
-        setShowUploadForm(false);
-        setFormValues(initialFormState);
-        setExistingImages([]);
-        setSelectedImageFiles([]);
-        updateImagePreviews([]);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
-      } else {
-        const { data } = await apiClient.post("/api/products", formData, config);
-        const createdProduct = data?.product ?? null;
+      const { data } = await apiClient.post("/api/products", formData, config);
+      const createdProduct = data?.product ?? null;
 
-        setProducts((prev) =>
-          createdProduct ? [createdProduct, ...prev] : prev
-        );
-        setFormStatus("success");
-        setFormFeedback(data?.message ?? "Product added successfully.");
-        setFormValues(initialFormState);
-        setManagementFeedback({
-          state: "success",
-          message: data?.message ?? "Product added successfully.",
-        });
-        setExistingImages([]);
-        setSelectedImageFiles([]);
-        updateImagePreviews([]);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
-      }
+      setProducts((prev) =>
+        createdProduct ? [createdProduct, ...prev] : prev
+      );
+      setFormStatus("success");
+      setFormFeedback(data?.message ?? "Product added successfully.");
+      setManagementFeedback({
+        state: "success",
+        message: data?.message ?? "Product added successfully.",
+      });
+      resetUploadState();
+      setShowUploadForm(false);
     } catch (err) {
-      const message =
-        err.response?.data?.message ??
-        "We could not publish this item. Please try again.";
+      let message = extractApiMessage(
+        err,
+        "We could not publish this item. Please try again."
+      );
+
+      if (err?.response?.status === 401) {
+        message = "Your session expired. Please sign in again to continue.";
+        logout();
+        navigate("/login");
+      }
+
       setFormStatus("error");
       setFormFeedback(message);
       setManagementFeedback({
         state: "error",
         message,
       });
-    }
-  };
-
-  const handleEditProduct = (product) => {
-    if (!product) {
-      return;
-    }
-
-    setShowUploadForm(true);
-    setFormMode("edit");
-    setEditingProductId(product.id);
-    setFormValues({
-      name: product.name ?? "",
-      price: product.price ?? "",
-      description: product.description ?? "",
-    });
-    setExistingImages(buildExistingImageState(product));
-    setFormStatus("idle");
-    setFormFeedback("");
-    setSelectedImageFiles([]);
-    updateImagePreviews([]);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  const handleCancelEdit = () => {
-    setFormMode("create");
-    setEditingProductId(null);
-    setFormValues(initialFormState);
-    setFormStatus("idle");
-    setFormFeedback("");
-    setShowUploadForm(false);
-    setManagementFeedback({ state: "idle", message: "" });
-    setExistingImages([]);
-    setSelectedImageFiles([]);
-    updateImagePreviews([]);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
     }
   };
 
@@ -457,29 +296,17 @@ const Products = () => {
         state: "success",
         message: data?.message ?? "Product removed successfully.",
       });
-
-      if (expandedProductId === productId) {
-        setExpandedProductId(null);
-      }
-
-      if (editingProductId === productId) {
-        setFormMode("create");
-        setEditingProductId(null);
-        setFormValues(initialFormState);
-        setFormStatus("idle");
-        setFormFeedback("");
-        setShowUploadForm(false);
-        setExistingImages([]);
-        setSelectedImageFiles([]);
-        updateImagePreviews([]);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
-      }
     } catch (err) {
-      const message =
+      let message =
         err.response?.data?.message ??
         "We could not remove this item. Please try again.";
+
+      if (err?.response?.status === 401) {
+        message = "Your session expired. Please sign in again to continue.";
+        logout();
+        navigate("/login");
+      }
+
       setManagementFeedback({
         state: "error",
         message,
@@ -496,25 +323,73 @@ const Products = () => {
       return true;
     }
 
-    if (roleKey !== "seller") {
+    if (!isSeller) {
       return false;
     }
 
-    const owner = product?.created_by
-      ? product.created_by.trim().toLowerCase()
-      : "";
-    return owner && owner === normalizedEmail;
+    const ownerEmail = product?.created_by?.trim().toLowerCase() ?? "";
+    return ownerEmail && ownerEmail === normalizedEmail;
+  };
+
+  const handleOpenProduct = (productId) => {
+    if (!productId) {
+      return;
+    }
+    navigate(`/products/${productId}`);
+  };
+
+  const handleCardKeyDown = (event, productId) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleOpenProduct(productId);
+    }
+  };
+
+  const handleAddToCart = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    // Cart logic to be implemented.
+  };
+
+  const handleProductUpdated = (updatedProduct) => {
+    if (!updatedProduct) {
+      return;
+    }
+    setProducts((prev) =>
+      prev.map((product) =>
+        product.id === updatedProduct.id ? updatedProduct : product
+      )
+    );
+    setManagementFeedback({
+      state: "success",
+      message: "Product updated successfully.",
+    });
+  };
+
+  const handleEditProduct = (event, productId) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!productId) {
+      return;
+    }
+    setEditingProductId(productId);
+    setIsEditModalOpen(true);
+  };
+
+  const handleCloseEditor = () => {
+    setIsEditModalOpen(false);
+    setEditingProductId(null);
   };
 
   return (
     <section className="page products-page">
       <header className="products-hero">
         <div className="products-hero__copy">
-          <p className="eyebrow">The Atelier</p>
-          <h1 className="page__title">Indulgent Lime Creations</h1>
-          <p className="page__subtitle">
-            Explore confections hand finished with bright citrus layers. Every
-            item is crafted in micro batches for the Lime Store tasting room.
+          <h1>Lime Atelier Collection</h1>
+          <p>
+            Explore our gallery of limited-batch desserts, chilled beverages, and
+            patisserie creations. Click any product to open its dedicated detail
+            page for a spacious, immersive view.
           </p>
         </div>
         {isSeller && (
@@ -524,11 +399,7 @@ const Products = () => {
               className="button button--gradient"
               onClick={handleToggleUpload}
             >
-              {showUploadForm
-                ? formMode === "edit"
-                  ? "Cancel Editing"
-                  : "Close Upload"
-                : "Add Product"}
+              {showUploadForm ? "Close Upload" : "Add Product"}
             </button>
           </div>
         )}
@@ -543,101 +414,59 @@ const Products = () => {
           <div className="product-upload__header">
             <h2>Showcase a New Indulgence</h2>
             <p>
-              Upload imagery, refine the tasting notes, and set the pricing for
-              your latest lime creation. Admins and sellers can publish items
-              instantly to the boutique.
+              Upload imagery, refine the tasting notes, and set pricing for your
+              latest lime creation. Admins and sellers can publish items instantly
+              to the boutique.
             </p>
           </div>
-          <form className="product-upload__form" onSubmit={handleUpload}>
-            <div className="product-upload__grid">
-              <label className="input-group">
-                <span>Product Name</span>
-                <input
-                  id="product-name"
-                  name="name"
-                  value={formValues.name}
-                  onChange={handleFieldChange}
-                  placeholder="Velvet Lime Gateau"
-                  required
-                />
-              </label>
-              <label className="input-group">
-                <span>Price</span>
-                <input
-                  id="product-price"
-                  name="price"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={formValues.price}
-                  onChange={handleFieldChange}
-                  placeholder="24.00"
-                  required
-                />
-              </label>
-              <label className="input-group">
-                <span>Product Images</span>
-                <input
-                  id="product-images"
-                  name="images"
-                  type="file"
-                  accept="image/*"
-                  ref={fileInputRef}
-                  onChange={handleImagesChange}
-                  multiple
-                  required={formMode === "create"}
-                />
-                <span className="input-hint">
-                  {formMode === "edit"
-                    ? "Add new photos or leave this empty to keep the current gallery."
-                    : "Upload one or more high-quality photos (PNG, JPG, JPEG, GIF, or WEBP)."}
-                </span>
-              </label>
-            </div>
-            {(existingImages.length > 0 || imagePreviews.length > 0) && (
-              <div className="product-upload__preview">
-                {existingImages.length > 0 && (
-                  <div className="product-upload__preview-group">
-                    <div className="product-upload__preview-header">
-                      <span>Current Gallery</span>
-                      {existingImages.some((image) => image.removable) && (
-                        <span className="product-upload__preview-hint">
-                          Click an image to toggle whether it stays published.
-                        </span>
-                      )}
-                    </div>
-                    <div className="product-upload__preview-grid">
-                      {existingImages.map((image, index) => (
-                        <button
-                          type="button"
-                          key={image.filename || image.url || index}
-                          className={`product-upload__preview-item${
-                            image.keep ? "" : " product-upload__preview-item--removed"
-                          }${
-                            image.removable
-                              ? ""
-                              : " product-upload__preview-item--locked"
-                          }`}
-                          onClick={() => handleExistingImageToggle(index)}
-                          disabled={!image.removable}
-                        >
-                          <img
-                            src={image.url}
-                            alt={`Existing product image ${index + 1}`}
-                          />
-                          <span className="product-upload__preview-toggle">
-                            {image.removable
-                              ? image.keep
-                                ? "Keeping"
-                                : "Removed"
-                              : "Locked"}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {imagePreviews.length > 0 && (
+          {showUploadForm && (
+            <form className="product-upload__form" onSubmit={handleCreateProduct}>
+              <div className="product-upload__grid">
+                <label className="input-group">
+                  <span>Product Name</span>
+                  <input
+                    id="product-name"
+                    name="name"
+                    value={formValues.name}
+                    onChange={handleFieldChange}
+                    placeholder="Velvet Lime Gateau"
+                    required
+                  />
+                </label>
+                <label className="input-group">
+                  <span>Price</span>
+                  <input
+                    id="product-price"
+                    name="price"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={formValues.price}
+                    onChange={handleFieldChange}
+                    placeholder="24.00"
+                    required
+                  />
+                </label>
+                <label className="input-group">
+                  <span>Product Images</span>
+                  <input
+                    id="product-images"
+                    name="images"
+                    type="file"
+                    accept="image/*"
+                    ref={fileInputRef}
+                    onChange={handleImagesChange}
+                    multiple
+                    required
+                  />
+                  <span className="input-hint">
+                    Upload one or more high-quality photos (PNG, JPG, JPEG, GIF, or
+                    WEBP).
+                  </span>
+                </label>
+              </div>
+              {imagePreviews.length > 0 && (
+                <div className="product-upload__preview">
                   <div className="product-upload__preview-group">
                     <div className="product-upload__preview-header">
                       <span>New Uploads</span>
@@ -656,59 +485,51 @@ const Products = () => {
                       ))}
                     </div>
                   </div>
-                )}
-              </div>
-            )}
-            <label className="input-group product-upload__description">
-              <span>Tasting Notes</span>
-              <textarea
-                id="product-description"
-                name="description"
-                rows={4}
-                value={formValues.description}
-                onChange={handleFieldChange}
-                placeholder="Describe the textures, garnishes, and lime varietals that make this item special."
-              />
-            </label>
-            <div className="product-upload__actions">
-              <button
-                type="submit"
-                className="button button--gradient"
-                disabled={formStatus === "loading"}
-              >
-                {formStatus === "loading"
-                  ? formMode === "edit"
-                    ? "Saving..."
-                    : "Uploading..."
-                  : formMode === "edit"
-                  ? "Save Changes"
-                  : "Upload Product"}
-              </button>
-              {formMode === "edit" && (
+                </div>
+              )}
+              <label className="input-group product-upload__description">
+                <span>Tasting Notes</span>
+                <textarea
+                  id="product-description"
+                  name="description"
+                  rows={4}
+                  value={formValues.description}
+                  onChange={handleFieldChange}
+                  placeholder="Describe the textures, garnishes, and lime varietals that make this item special."
+                />
+              </label>
+              <div className="product-upload__actions">
+                <button
+                  type="submit"
+                  className="button button--gradient"
+                  disabled={formStatus === "loading"}
+                >
+                  {formStatus === "loading" ? "Uploading..." : "Upload Product"}
+                </button>
                 <button
                   type="button"
                   className="button button--outline"
-                  onClick={handleCancelEdit}
+                  onClick={handleToggleUpload}
                   disabled={formStatus === "loading"}
                 >
                   Cancel
                 </button>
+              </div>
+              {formFeedback && (
+                <p
+                  className={`form-feedback${
+                    formStatus === "error"
+                      ? " form-feedback--error"
+                      : formStatus === "success"
+                      ? " form-feedback--success"
+                      : ""
+                  }`}
+                >
+                  {formFeedback}
+                </p>
               )}
-            </div>
-            {formFeedback && (
-              <p
-                className={`form-feedback${
-                  formStatus === "error"
-                    ? " form-feedback--error"
-                    : formStatus === "success"
-                    ? " form-feedback--success"
-                    : ""
-                }`}
-              >
-                {formFeedback}
-              </p>
-            )}
-          </form>
+            </form>
+          )}
         </section>
       )}
 
@@ -735,10 +556,10 @@ const Products = () => {
             </p>
           )}
           <header className="products-showcase__intro">
-            <h2>Curated For Lime Enthusiasts</h2>
+            <h2>Curated for Lime Enthusiasts</h2>
             <p>
-              Limited run desserts, chilled beverages, and patisserie pieces
-              plated to celebrate the full spectrum of lime.
+              Dive into each product&apos;s dedicated detail page to view expanded
+              galleries, tasting notes, and publishing history.
             </p>
           </header>
           <div className="product-grid product-grid--elevated">
@@ -764,32 +585,23 @@ const Products = () => {
               ]
                 .map((url) => (typeof url === "string" ? url.trim() : ""))
                 .filter((url, index, self) => url && self.indexOf(url) === index);
-              const totalImages = imageUrls.length;
-              const isExpanded = expandedProductId === product.id;
-              const activeImageIndex =
-                isExpanded && expandedImageIndex < totalImages
-                  ? expandedImageIndex
-                  : 0;
-              const primaryImageUrl = imageUrls[activeImageIndex] ?? "";
+              const primaryImageUrl = imageUrls[0] ?? "";
               const createdAtLabel = formatPublishedDate(product.created_at);
 
               return (
                 <article
                   key={product.id}
-                  className={`product-card product-card--elevated product-card--expandable${
-                    isExpanded ? " product-card--expanded" : ""
-                  }`}
-                  onClick={() => handleCardToggle(product.id)}
+                  className="product-card product-card--elevated"
+                  onClick={() => handleOpenProduct(product.id)}
                   onKeyDown={(event) => handleCardKeyDown(event, product.id)}
-                  role="button"
+                  role="link"
                   tabIndex={0}
-                  aria-expanded={isExpanded}
                 >
                   <div className="product-card__media">
                     {primaryImageUrl ? (
                       <img
                         src={primaryImageUrl}
-                        alt={`${product.name} preview ${activeImageIndex + 1}`}
+                        alt={`${product.name} preview`}
                         loading="lazy"
                       />
                     ) : (
@@ -797,9 +609,9 @@ const Products = () => {
                         Lime Atelier
                       </div>
                     )}
-                    {totalImages > 1 && (
+                    {imageUrls.length > 1 && (
                       <span className="product-card__image-count">
-                        {totalImages} photos
+                        {imageUrls.length} photos
                       </span>
                     )}
                   </div>
@@ -810,53 +622,25 @@ const Products = () => {
                         Published by {publisherName}
                       </span>
                     </div>
-                    <p className="product-card__description">{description}</p>
-                    {isExpanded && totalImages > 1 && (
-                      <div className="product-card__gallery">
-                        <div className="product-card__thumbnails">
-                          {imageUrls.map((imageUrl, index) => (
-                            <button
-                              type="button"
-                              key={`${product.id}-thumbnail-${index}`}
-                              className={`product-card__thumbnail${
-                                index === activeImageIndex
-                                  ? " product-card__thumbnail--active"
-                                  : ""
-                              }`}
-                              onClick={(event) =>
-                                handlePreviewSelect(event, index, totalImages)
-                              }
-                            >
-                              <img
-                                src={imageUrl}
-                                alt={`${product.name} thumbnail ${index + 1}`}
-                                loading="lazy"
-                              />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {isExpanded && (
-                      <dl className="product-card__details">
-                        {createdAtLabel && (
-                          <div>
-                            <dt>Published</dt>
-                            <dd>{createdAtLabel}</dd>
-                          </div>
-                        )}
-                        <div>
-                          <dt>Photos</dt>
-                          <dd>{totalImages}</dd>
-                        </div>
-                      </dl>
-                    )}
+                    <p className="product-card__description product-card__description--clamp">
+                      {description}
+                    </p>
+                    <div className="product-card__meta">
+                      {createdAtLabel && (
+                        <span className="product-card__meta-item">
+                          First plated {createdAtLabel}
+                        </span>
+                      )}
+                      <span className="product-card__meta-item">
+                        {imageUrls.length || 1} photograph(s)
+                      </span>
+                    </div>
                     <div className="product-card__footer">
                       <span className="product-card__price">{priceLabel}</span>
                       <button
                         type="button"
                         className="button button--outline product-card__button"
-                        onClick={(event) => event.stopPropagation()}
+                        onClick={handleAddToCart}
                       >
                         Add to Cart
                       </button>
@@ -866,17 +650,15 @@ const Products = () => {
                         <button
                           type="button"
                           className="product-card__action"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handleEditProduct(product);
-                          }}
+                          onClick={(event) => handleEditProduct(event, product.id)}
                         >
-                          Edit
+                          Edit details
                         </button>
                         <button
                           type="button"
                           className="product-card__action product-card__action--danger"
                           onClick={(event) => {
+                            event.preventDefault();
                             event.stopPropagation();
                             handleDeleteProduct(product.id);
                           }}
@@ -891,6 +673,33 @@ const Products = () => {
             })}
           </div>
         </section>
+      )}
+      {isEditModalOpen && editingProductId && (
+        <div
+          className="product-editor-modal"
+          role="presentation"
+          ref={modalContainerRef}
+        >
+          <button
+            type="button"
+            className="product-editor-modal__backdrop"
+            onClick={handleCloseEditor}
+            aria-label="Close product editor"
+          />
+          <div
+            className="product-editor-modal__dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="product-editor-title"
+          >
+            <ProductEditor
+              productId={editingProductId}
+              layout="modal"
+              onClose={handleCloseEditor}
+              onProductUpdated={handleProductUpdated}
+            />
+          </div>
+        </div>
       )}
     </section>
   );

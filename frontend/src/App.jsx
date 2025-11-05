@@ -4,6 +4,8 @@ import Cart from "./pages/Cart";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 import Products from "./pages/Products";
+import ProductDetail from "./pages/ProductDetail";
+import ProductEdit from "./pages/ProductEdit";
 import Signup from "./pages/Signup";
 import Admin from "./pages/Admin";
 import "./App.css";
@@ -94,6 +96,8 @@ const App = () => {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/products" element={<Products />} />
+          <Route path="/products/:productId" element={<ProductDetail />} />
+          <Route path="/products/:productId/edit" element={<ProductEdit />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/cart" element={<Cart />} />

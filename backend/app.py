@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from uuid import uuid4
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import bcrypt
 from dotenv import load_dotenv
@@ -43,7 +43,7 @@ def create_app() -> Flask:
     app.config["MONGO_URI"] = os.getenv(
         "MONGO_URI", "mongodb://localhost:27017/limeshop"
     )
-    max_upload_mb = int(os.getenv("MAX_UPLOAD_SIZE_MB", "8"))
+    max_upload_mb = int(os.getenv("MAX_UPLOAD_SIZE_MB", "16"))
     app.config["MAX_CONTENT_LENGTH"] = max_upload_mb * 1024 * 1024
 
     upload_directory = os.getenv("PRODUCT_UPLOAD_FOLDER")
@@ -532,6 +532,25 @@ def create_app() -> Flask:
         ]
         return jsonify({"products": products})
 
+    @app.route("/api/products/<product_id>", methods=["GET"])
+    def get_product(product_id: str):
+        product_document, load_error = fetch_product(product_id)
+        if load_error:
+            return load_error
+
+        owner_email = normalize_email(product_document.get("created_by"))
+        user_names: Dict[str, str] = {}
+        if owner_email:
+            user_document = db.users.find_one({"email": owner_email})
+            if user_document:
+                user_names[owner_email] = user_document.get("name", "") or ""
+        if owner_email == DEFAULT_ADMIN_EMAIL:
+            user_names.setdefault(DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_NAME)
+
+        return jsonify(
+            {"product": serialize_product(product_document, user_names=user_names)}
+        )
+
     @app.route("/api/products", methods=["POST"])
     @jwt_required()
     def create_product():
@@ -638,6 +657,17 @@ def create_app() -> Flask:
             if normalized_legacy not in existing_filenames:
                 existing_filenames.insert(0, normalized_legacy)
 
+        def normalize_retained_value(value: str) -> str:
+            candidate = str(value or "").strip()
+            if not candidate:
+                return ""
+            parsed = urlparse(candidate)
+            path_candidate = parsed.path if parsed.scheme else candidate
+            basename = os.path.basename(path_candidate.replace("\\", "/"))
+            if basename:
+                return basename
+            return candidate
+
         retain_explicit = False
         retain_field_value = None
         if "retain_images" in payload:
@@ -658,9 +688,22 @@ def create_app() -> Flask:
                 return jsonify({"message": "We could not understand the retained image list."}), 400
 
             for item in parsed_value:
-                normalized = str(item)
-                if normalized in existing_filenames and normalized not in retained_filenames:
-                    retained_filenames.append(normalized)
+                normalized_candidate = normalize_retained_value(item)
+                if not normalized_candidate:
+                    continue
+
+                if (
+                    normalized_candidate in existing_filenames
+                    and normalized_candidate not in retained_filenames
+                ):
+                    retained_filenames.append(normalized_candidate)
+                    continue
+
+                # As a fallback, try to match by suffix to guard against accidental path prefixes.
+                for existing in existing_filenames:
+                    if existing and existing.endswith(normalized_candidate) and existing not in retained_filenames:
+                        retained_filenames.append(existing)
+                        break
         else:
             retained_filenames = list(existing_filenames)
 
@@ -702,9 +745,11 @@ def create_app() -> Flask:
         next_filenames = unique_preserve(retained_filenames + saved_new_filenames)
 
         if not next_filenames:
-            if saved_new_filenames:
-                remove_product_image(saved_new_filenames)
-            return jsonify({"message": "Please provide at least one product image."}), 400
+            if existing_filenames:
+                if saved_new_filenames:
+                    remove_product_image(saved_new_filenames)
+                return jsonify({"message": "Please provide at least one product image."}), 400
+            next_filenames = list(existing_filenames)
 
         images_changed = next_filenames != existing_filenames
 
