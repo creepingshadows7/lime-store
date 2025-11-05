@@ -1,1 +1,1 @@
-v1.3.2 Updated Favicon and in browser site name
+v1.3.3 Updated picture system for store items

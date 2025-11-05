@@ -8,6 +8,7 @@ Startup.txt
 __pycache__/
 *.pyc
 .env
+backend/uploads/
 
 # Node.js
 node_modules/
@@ -21,4 +22,3 @@ build/
 # Virtual environments
 venv/
 .env/
-

@@ -516,6 +516,32 @@
   justify-content: flex-start;
 }
 
+.input-hint {
+  display: block;
+  margin-top: 0.4rem;
+  font-size: 0.8rem;
+  color: rgba(226, 248, 220, 0.6);
+  letter-spacing: 0.05em;
+}
+
+.product-upload__preview {
+  border: 1px solid rgba(169, 255, 124, 0.2);
+  border-radius: 22px;
+  background: rgba(9, 18, 16, 0.6);
+  padding: 1rem;
+  display: flex;
+  justify-content: center;
+  max-width: min(460px, 100%);
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.32);
+}
+
+.product-upload__preview img {
+  width: 100%;
+  border-radius: 18px;
+  object-fit: cover;
+  max-height: 320px;
+}
+
 .products-showcase {
   display: grid;
   gap: clamp(1.5rem, 4vw, 2.75rem);

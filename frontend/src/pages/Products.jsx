@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
@@ -6,7 +6,6 @@ import { DEFAULT_ADMIN_EMAIL } from "../constants";
 const initialFormState = {
   name: "",
   price: "",
-  image_url: "",
   description: "",
 };
 
@@ -25,6 +24,28 @@ const Products = () => {
     state: "idle",
     message: "",
   });
+  const [selectedImageFile, setSelectedImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState("");
+  const previousPreviewRef = useRef("");
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      const previous = previousPreviewRef.current;
+      if (previous && previous.startsWith("blob:")) {
+        URL.revokeObjectURL(previous);
+      }
+    };
+  }, []);
+
+  const updateImagePreview = (nextPreview) => {
+    const previous = previousPreviewRef.current;
+    if (previous && previous.startsWith("blob:") && previous !== nextPreview) {
+      URL.revokeObjectURL(previous);
+    }
+    previousPreviewRef.current = nextPreview;
+    setImagePreview(nextPreview);
+  };
 
   const normalizedEmail = profile?.email
     ? profile.email.trim().toLowerCase()
@@ -42,6 +63,16 @@ const Products = () => {
   useEffect(() => {
     if (!isSeller) {
       setShowUploadForm(false);
+      setFormMode("create");
+      setEditingProductId(null);
+      setFormValues(initialFormState);
+      setFormStatus("idle");
+      setFormFeedback("");
+      setSelectedImageFile(null);
+      updateImagePreview("");
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   }, [isSeller]);
 
@@ -101,6 +132,11 @@ const Products = () => {
         setFormStatus("idle");
         setFormFeedback("");
       }
+      setSelectedImageFile(null);
+      updateImagePreview("");
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
       return next;
     });
     setFormStatus("idle");
@@ -114,6 +150,18 @@ const Products = () => {
     setFormFeedback("");
   };
 
+  const handleImageChange = (event) => {
+    const file = event.target.files?.[0] ?? null;
+    setSelectedImageFile(file);
+    if (file) {
+      updateImagePreview(URL.createObjectURL(file));
+    } else {
+      updateImagePreview("");
+    }
+    setFormStatus("idle");
+    setFormFeedback("");
+  };
+
   const handleUpload = async (event) => {
     event.preventDefault();
 
@@ -122,13 +170,19 @@ const Products = () => {
     }
 
     const name = formValues.name.trim();
-    const imageUrl = formValues.image_url.trim();
     const description = formValues.description.trim();
     const cleanedPrice = formValues.price.trim();
+    const isEditMode = formMode === "edit" && editingProductId;
 
     if (name.length < 3) {
       setFormStatus("error");
       setFormFeedback("Please provide a name with at least three characters.");
+      return;
+    }
+
+    if (!selectedImageFile && !isEditMode) {
+      setFormStatus("error");
+      setFormFeedback("Please upload an image for this product.");
       return;
     }
 
@@ -143,20 +197,26 @@ const Products = () => {
     setFormFeedback("");
     setManagementFeedback({ state: "idle", message: "" });
 
-    const payload = {
-      name,
-      price: numericPrice,
-      image_url: imageUrl,
-      description,
-    };
+    const formData = new FormData();
+    formData.append("name", name);
+    formData.append("price", numericPrice.toString());
+    formData.append("description", description);
+    if (selectedImageFile) {
+      formData.append("image", selectedImageFile);
+    }
 
-    const isEditMode = formMode === "edit" && editingProductId;
+    const config = {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    };
 
     try {
       if (isEditMode) {
         const { data } = await apiClient.put(
           `/api/products/${editingProductId}`,
-          payload
+          formData,
+          config
         );
         const updatedProduct = data?.product ?? null;
         if (updatedProduct) {
@@ -176,8 +236,13 @@ const Products = () => {
         setEditingProductId(null);
         setShowUploadForm(false);
         setFormValues(initialFormState);
+        setSelectedImageFile(null);
+        updateImagePreview("");
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
       } else {
-        const { data } = await apiClient.post("/api/products", payload);
+        const { data } = await apiClient.post("/api/products", formData, config);
         const createdProduct = data?.product ?? null;
 
         setProducts((prev) =>
@@ -190,6 +255,11 @@ const Products = () => {
           state: "success",
           message: data?.message ?? "Product added successfully.",
         });
+        setSelectedImageFile(null);
+        updateImagePreview("");
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
       }
     } catch (err) {
       const message =
@@ -215,11 +285,15 @@ const Products = () => {
     setFormValues({
       name: product.name ?? "",
       price: product.price ?? "",
-      image_url: product.image_url ?? "",
       description: product.description ?? "",
     });
     setFormStatus("idle");
     setFormFeedback("");
+    setSelectedImageFile(null);
+    updateImagePreview(product.image_url ?? "");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const handleCancelEdit = () => {
@@ -230,6 +304,11 @@ const Products = () => {
     setFormFeedback("");
     setShowUploadForm(false);
     setManagementFeedback({ state: "idle", message: "" });
+    setSelectedImageFile(null);
+    updateImagePreview("");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const handleDeleteProduct = async (productId) => {
@@ -261,6 +340,11 @@ const Products = () => {
         setFormStatus("idle");
         setFormFeedback("");
         setShowUploadForm(false);
+        setSelectedImageFile(null);
+        updateImagePreview("");
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
       }
     } catch (err) {
       const message =
@@ -362,17 +446,28 @@ const Products = () => {
                 />
               </label>
               <label className="input-group">
-                <span>Image URL</span>
+                <span>Product Image</span>
                 <input
                   id="product-image"
-                  name="image_url"
-                  type="url"
-                  value={formValues.image_url}
-                  onChange={handleFieldChange}
-                  placeholder="https://"
+                  name="image"
+                  type="file"
+                  accept="image/*"
+                  ref={fileInputRef}
+                  onChange={handleImageChange}
+                  required={formMode === "create"}
                 />
+                <span className="input-hint">
+                  {formMode === "edit"
+                    ? "Choose a new file to replace the current image."
+                    : "Upload a high-quality photo (PNG, JPG, JPEG, GIF, or WEBP)."}
+                </span>
               </label>
             </div>
+            {imagePreview && (
+              <div className="product-upload__preview">
+                <img src={imagePreview} alt="Selected product preview" />
+              </div>
+            )}
             <label className="input-group product-upload__description">
               <span>Tasting Notes</span>
               <textarea

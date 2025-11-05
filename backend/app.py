@@ -1,10 +1,12 @@
 import os
 from datetime import datetime, timedelta
 from typing import Dict, Optional
+from uuid import uuid4
+from urllib.parse import urljoin
 
 import bcrypt
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_jwt_extended import (
     JWTManager,
@@ -15,6 +17,7 @@ from flask_jwt_extended import (
 from flask_pymongo import PyMongo
 from bson import ObjectId
 from bson.errors import InvalidId
+from werkzeug.utils import secure_filename
 
 load_dotenv()
 
@@ -39,6 +42,19 @@ def create_app() -> Flask:
     app.config["MONGO_URI"] = os.getenv(
         "MONGO_URI", "mongodb://localhost:27017/limeshop"
     )
+    max_upload_mb = int(os.getenv("MAX_UPLOAD_SIZE_MB", "8"))
+    app.config["MAX_CONTENT_LENGTH"] = max_upload_mb * 1024 * 1024
+
+    upload_directory = os.getenv("PRODUCT_UPLOAD_FOLDER")
+    if upload_directory:
+        upload_directory = os.path.abspath(upload_directory)
+    else:
+        upload_directory = os.path.join(app.root_path, "uploads")
+
+    os.makedirs(upload_directory, exist_ok=True)
+
+    app.config["PRODUCT_UPLOAD_FOLDER"] = upload_directory
+    app.config["PRODUCT_ALLOWED_EXTENSIONS"] = {"png", "jpg", "jpeg", "gif", "webp"}
 
     # --- Initialize extensions ---
     CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -51,31 +67,26 @@ def create_app() -> Flask:
             "name": "Luminous Lime Elixir",
             "price": 12.5,
             "description": "Sparkling lime nectar infused with basil and cold-pressed citrus oils.",
-            "image_url": "https://images.unsplash.com/photo-1527169402691-feff5539e52c?auto=format&fit=crop&w=900&q=80",
         },
         {
             "name": "Key Lime Cloud Tart",
             "price": 18.0,
             "description": "Feather-light tart with whipped mascarpone and candied lime zest.",
-            "image_url": "https://images.unsplash.com/photo-1499636136210-6f4ee915583e?auto=format&fit=crop&w=900&q=80",
         },
         {
             "name": "Citrus Grove Bonbons",
             "price": 9.75,
             "description": "Hand painted white chocolate bonbons with a tangy lime curd center.",
-            "image_url": "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=900&q=80",
         },
         {
             "name": "Verdant Velvet Cheesecake",
             "price": 22.5,
             "description": "Baked lime cheesecake with pistachio crumb and kaffir lime cream.",
-            "image_url": "https://images.unsplash.com/photo-1505253716362-afaea1d3d1af?auto=format&fit=crop&w=900&q=80",
         },
         {
             "name": "Glacier Lime Sorbet",
             "price": 6.5,
             "description": "Icy sorbet spun with Tahitian vanilla and crystallized lime peel.",
-            "image_url": "https://images.unsplash.com/photo-1527169409092-72a3a99589aa?auto=format&fit=crop&w=900&q=80",
         },
     ]
 
@@ -135,7 +146,7 @@ def create_app() -> Flask:
                     "name": product.get("name", ""),
                     "price": float(product.get("price", 0) or 0),
                     "description": product.get("description", ""),
-                    "image_url": product.get("image_url", ""),
+                    "image_filename": product.get("image_filename"),
                     "created_at": timestamp,
                     "created_by": DEFAULT_ADMIN_EMAIL,
                 }
@@ -144,6 +155,51 @@ def create_app() -> Flask:
         if documents:
             db.products.insert_many(documents)
 
+    def allowed_image_extension(filename: str) -> bool:
+        extension = os.path.splitext(filename)[1].lower().lstrip(".")
+        if not extension:
+            return False
+        return extension in app.config["PRODUCT_ALLOWED_EXTENSIONS"]
+
+    def save_product_image(image_file):
+        if not image_file or not getattr(image_file, "filename", ""):
+            return None, "An image file is required."
+
+        original_filename = secure_filename(image_file.filename)
+        if not original_filename:
+            return None, "Please choose a valid file name."
+
+        if not allowed_image_extension(original_filename):
+            return (
+                None,
+                "Unsupported image format. Upload PNG, JPG, JPEG, GIF, or WEBP files.",
+            )
+
+        extension = os.path.splitext(original_filename)[1].lower()
+        unique_filename = f"{uuid4().hex}{extension}"
+        destination = os.path.join(
+            app.config["PRODUCT_UPLOAD_FOLDER"], unique_filename
+        )
+
+        try:
+            image_file.save(destination)
+        except OSError:
+            return None, "We could not store the uploaded image. Please try again."
+
+        return unique_filename, None
+
+    def remove_product_image(filename: Optional[str]):
+        if not filename:
+            return
+
+        target = os.path.join(app.config["PRODUCT_UPLOAD_FOLDER"], filename)
+        try:
+            os.remove(target)
+        except FileNotFoundError:
+            return
+        except OSError:
+            return
+
     def serialize_product(product_document):
         created_at = product_document.get("created_at")
         try:
@@ -151,12 +207,22 @@ def create_app() -> Flask:
         except (TypeError, ValueError):
             price_value = 0.0
 
+        image_url = ""
+        image_filename = product_document.get("image_filename")
+        if image_filename:
+            relative_path = f"uploads/{image_filename}"
+            image_url = urljoin(request.host_url, relative_path)
+        else:
+            legacy_url = product_document.get("image_url")
+            if legacy_url:
+                image_url = legacy_url
+
         return {
             "id": str(product_document.get("_id")),
             "name": product_document.get("name", ""),
             "price": f"{price_value:.2f}",
             "description": product_document.get("description", ""),
-            "image_url": product_document.get("image_url", ""),
+            "image_url": image_url,
             "created_at": created_at.isoformat()
             if isinstance(created_at, datetime)
             else None,
@@ -191,6 +257,10 @@ def create_app() -> Flask:
         return owner_email and owner_email == current_email
 
     # --- ROUTES ---
+
+    @app.route("/uploads/<path:filename>")
+    def serve_uploaded_file(filename: str):
+        return send_from_directory(app.config["PRODUCT_UPLOAD_FOLDER"], filename)
 
     # Register
     @app.route("/api/register", methods=["POST"])
@@ -368,11 +438,14 @@ def create_app() -> Flask:
         if permission_error:
             return permission_error
 
-        payload = request.get_json(silent=True) or {}
+        payload = request.form.to_dict() if request.form else {}
+        if not payload:
+            payload = request.get_json(silent=True) or {}
+
         name = str(payload.get("name", "")).strip()
         description = str(payload.get("description", "")).strip()
-        image_url = str(payload.get("image_url", "")).strip()
         raw_price = payload.get("price", "")
+        image_file = request.files.get("image") if request.files else None
 
         if not name:
             return jsonify({"message": "A product name is required."}), 400
@@ -385,13 +458,17 @@ def create_app() -> Flask:
         if price_value <= 0:
             return jsonify({"message": "Price must be greater than zero."}), 400
 
+        saved_filename, image_error = save_product_image(image_file)
+        if image_error:
+            return jsonify({"message": image_error}), 400
+
         product_document = {
             "name": name,
             "description": description,
-            "image_url": image_url,
             "price": price_value,
             "created_at": datetime.utcnow(),
             "created_by": normalize_email(current_user.get("email")),
+            "image_filename": saved_filename,
         }
 
         result = db.products.insert_one(product_document)
@@ -424,8 +501,14 @@ def create_app() -> Flask:
                 403,
             )
 
-        payload = request.get_json(silent=True) or {}
+        payload = request.form.to_dict() if request.form else {}
+        if not payload and request.is_json:
+            payload = request.get_json(silent=True) or {}
+
+        image_file = request.files.get("image") if request.files else None
         updates: Dict[str, object] = {}
+        previous_image_filename = product_document.get("image_filename")
+        remove_previous_image = False
 
         if "name" in payload:
             name_value = str(payload.get("name", "")).strip()
@@ -436,9 +519,6 @@ def create_app() -> Flask:
         if "description" in payload:
             updates["description"] = str(payload.get("description", "")).strip()
 
-        if "image_url" in payload:
-            updates["image_url"] = str(payload.get("image_url", "")).strip()
-
         if "price" in payload:
             try:
                 price_value = round(float(payload["price"]), 2)
@@ -448,6 +528,13 @@ def create_app() -> Flask:
             if price_value <= 0:
                 return jsonify({"message": "Price must be greater than zero."}), 400
             updates["price"] = price_value
+
+        if image_file and getattr(image_file, "filename", ""):
+            new_filename, image_error = save_product_image(image_file)
+            if image_error:
+                return jsonify({"message": image_error}), 400
+            updates["image_filename"] = new_filename
+            remove_previous_image = True
 
         if not updates:
             return jsonify({"message": "No product changes detected."}), 400
@@ -460,6 +547,9 @@ def create_app() -> Flask:
         )
 
         updated_product = db.products.find_one({"_id": product_document["_id"]})
+
+        if remove_previous_image and previous_image_filename != updates.get("image_filename"):
+            remove_product_image(previous_image_filename)
 
         return jsonify(
             {
@@ -486,6 +576,7 @@ def create_app() -> Flask:
             )
 
         db.products.delete_one({"_id": product_document["_id"]})
+        remove_product_image(product_document.get("image_filename"))
 
         return jsonify({"message": "Product removed successfully."})
 
