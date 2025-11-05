@@ -5,18 +5,32 @@ import Home from "./pages/Home";
 import Login from "./pages/Login";
 import Products from "./pages/Products";
 import Signup from "./pages/Signup";
+import Admin from "./pages/Admin";
 import "./App.css";
 import { useAuth } from "./context/AuthContext";
+import { DEFAULT_ADMIN_EMAIL } from "./constants";
 
 const App = () => {
   const { isAuthenticated, profile, logout } = useAuth();
   const navigate = useNavigate();
+  const normalizedEmail = profile?.email
+    ? profile.email.trim().toLowerCase()
+    : "";
+  const isAdmin =
+    isAuthenticated &&
+    profile?.role === "admin" &&
+    normalizedEmail === DEFAULT_ADMIN_EMAIL;
+
   const navigationItems = [
     { to: "/", label: "Home" },
     { to: "/products", label: "Products" },
     { to: "/cart", label: "Cart" },
     { to: "/account", label: "Account", authOnly: true },
   ];
+
+  if (isAdmin) {
+    navigationItems.push({ to: "/admin", label: "Admin", authOnly: true });
+  }
 
   const handleLogout = () => {
     logout();
@@ -84,6 +98,7 @@ const App = () => {
           <Route path="/signup" element={<Signup />} />
           <Route path="/cart" element={<Cart />} />
           <Route path="/account" element={<Account />} />
+          <Route path="/admin" element={<Admin />} />
         </Routes>
       </main>
       <footer className="lux-footer">

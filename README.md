@@ -1,1 +1,1 @@
-v1.2.1 Design and Font change
+v1.2.2 Admin Page with 2 permissions
