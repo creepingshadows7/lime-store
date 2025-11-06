@@ -1236,6 +1236,41 @@ def create_app() -> Flask:
             status_code,
         )
 
+    @app.route("/api/categories/<category_id>", methods=["DELETE"])
+    @jwt_required()
+    def delete_category_route(category_id: str):
+        current_user, permission_error = require_role("seller", "admin")
+        if permission_error:
+            return permission_error
+
+        try:
+            category_object_id = ObjectId(category_id)
+        except (InvalidId, TypeError):
+            return jsonify({"message": "Invalid category identifier."}), 400
+
+        category_document = db.categories.find_one({"_id": category_object_id})
+        if not category_document:
+            return jsonify({"message": "Category not found."}), 404
+
+        db.categories.delete_one({"_id": category_object_id})
+        db.products.update_many(
+            {"category_ids": category_object_id},
+            {"$pull": {"category_ids": category_object_id}},
+        )
+
+        product_counts = build_category_product_counts()
+        normalized_counts = {
+            str(key): int(value) for key, value in product_counts.items()
+        }
+
+        return jsonify(
+            {
+                "message": f'"{category_document.get("name", "Category")}" has been removed from the catalog.',
+                "category": {"id": str(category_object_id)},
+                "product_counts": normalized_counts,
+            }
+        )
+
     # Checkout
     @app.route("/api/checkout", methods=["POST"])
     @jwt_required()

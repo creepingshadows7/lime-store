@@ -86,6 +86,11 @@ const Products = () => {
   const [categoryFormName, setCategoryFormName] = useState("");
   const [categoryFormStatus, setCategoryFormStatus] = useState("idle");
   const [categoryFormFeedback, setCategoryFormFeedback] = useState("");
+  const [categoryActionFeedback, setCategoryActionFeedback] = useState({
+    state: "idle",
+    message: "",
+  });
+  const [categoryBusyId, setCategoryBusyId] = useState("");
 
   const applyCategories = useCallback((nextCategories) => {
     setCategories(normalizeCategoriesList(nextCategories ?? []));
@@ -97,6 +102,35 @@ const Products = () => {
     }
     setCategories((prev) =>
       normalizeCategoriesList([...prev, ...additionalCategories])
+    );
+  }, []);
+
+  const removeCategoryFromProducts = useCallback((categoryId) => {
+    if (!categoryId) {
+      return;
+    }
+    setProducts((prev) =>
+      prev.map((product) => {
+        const shouldUpdate =
+          Array.isArray(product.category_ids) &&
+          product.category_ids.includes(categoryId);
+        if (!shouldUpdate) {
+          return product;
+        }
+        const nextCategoryIds = product.category_ids.filter(
+          (id) => id !== categoryId
+        );
+        const nextCategories = Array.isArray(product.categories)
+          ? product.categories.filter(
+              (category) => (category?.id ?? category?._id) !== categoryId
+            )
+          : [];
+        return {
+          ...product,
+          category_ids: nextCategoryIds,
+          categories: nextCategories,
+        };
+      })
     );
   }, []);
 
@@ -337,6 +371,55 @@ const Products = () => {
       }
       setCategoryFormStatus("error");
       setCategoryFormFeedback(message);
+    }
+  };
+
+  const handleDeleteCategory = async (categoryId, categoryName) => {
+    if (!categoryId) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `Remove the “${categoryName || "Unnamed"}” category from the catalog?`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setCategoryBusyId(categoryId);
+    setCategoryActionFeedback({ state: "loading", message: "" });
+
+    try {
+      const { data } = await apiClient.delete(`/api/categories/${categoryId}`);
+      const message =
+        data?.message ??
+        `"${categoryName || "Category"}" has been retired from the boutique.`;
+      setCategoryActionFeedback({ state: "success", message });
+      removeCategoryFromProducts(categoryId);
+      setCategories((prev) =>
+          prev.filter((category) => {
+            const currentId = category?.id ?? category?._id;
+            return currentId !== categoryId;
+          })
+        );
+      setSelectedCategoryFilter((current) =>
+        current === categoryId ? "all" : current
+      );
+      setSelectedFormCategoryIds((prev) =>
+        prev.filter((id) => id !== categoryId)
+      );
+      await refreshCategories();
+    } catch (err) {
+      let message =
+        err.response?.data?.message ??
+        "We could not remove that category. Please try again.";
+      if (err?.response?.status === 401) {
+        message = "Your session expired. Please sign in again to continue.";
+        logout();
+        navigate("/login", { replace: true });
+      }
+      setCategoryActionFeedback({ state: "error", message });
+    } finally {
+      setCategoryBusyId("");
     }
   };
 
@@ -587,7 +670,7 @@ const Products = () => {
               className="button button--ghost"
               onClick={handleToggleCategoryForm}
             >
-              {isCategoryFormOpen ? "Close Category Form" : "New Category"}
+              {isCategoryFormOpen ? "Close Category Form" : "Manage Categories"}
             </button>
             <button
               type="button"
@@ -652,6 +735,44 @@ const Products = () => {
               saved, everyone can filter by it instantly.
             </p>
           </div>
+          {categories.length === 0 ? (
+            <p className="category-manager__empty">
+              No bespoke labels yet. Add one below to get the curation started.
+            </p>
+          ) : (
+            <div className="category-manager__list">
+              {categories.map((category) => {
+                const categoryId = category.id ?? category._id;
+                const count =
+                  categoryProductCounts.get(categoryId) ??
+                  category.product_count ??
+                  0;
+                const isBusy = categoryBusyId === categoryId;
+                return (
+                  <div key={categoryId} className="category-manager__item">
+                    <div className="category-manager__item-info">
+                      <span className="category-manager__item-name">
+                        {category.name}
+                      </span>
+                      <span className="category-manager__item-count">
+                        {count === 1 ? "1 product" : `${count} products`}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="category-manager__delete"
+                      onClick={() =>
+                        handleDeleteCategory(categoryId, category.name)
+                      }
+                      disabled={isBusy}
+                    >
+                      {isBusy ? "Removing..." : "Delete"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <form className="category-manager__form" onSubmit={handleCreateCategory}>
             <label className="input-group">
               <span>Category Name</span>
@@ -695,6 +816,19 @@ const Products = () => {
                 }`}
               >
                 {categoryFormFeedback}
+              </p>
+            ) : null}
+            {categoryActionFeedback.message ? (
+              <p
+                className={`form-feedback${
+                  categoryActionFeedback.state === "error"
+                    ? " form-feedback--error"
+                    : categoryActionFeedback.state === "success"
+                    ? " form-feedback--success"
+                    : ""
+                } category-manager__feedback`}
+              >
+                {categoryActionFeedback.message}
               </p>
             ) : null}
           </form>
