@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
 import { formatPublishedDate } from "../utils/dates";
+import CategorySelector from "./CategorySelector";
 
 const initialFormState = {
   name: "",
@@ -90,6 +91,8 @@ const ProductEditor = ({
   layout = "page",
   onClose,
   onProductUpdated,
+  availableCategories = null,
+  onCategoriesChanged,
 }) => {
   const { isAuthenticated, profile, logout } = useAuth();
   const [status, setStatus] = useState("loading");
@@ -104,7 +107,15 @@ const ProductEditor = ({
   const previousPreviewsRef = useRef([]);
   const fileInputRef = useRef(null);
   const containerRef = useRef(null);
+  const [categories, setCategories] = useState(
+    Array.isArray(availableCategories) ? availableCategories : []
+  );
+  const [categoryStatus, setCategoryStatus] = useState("idle");
+  const [categoryFeedback, setCategoryFeedback] = useState("");
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState([]);
+  const [draftCategoryNames, setDraftCategoryNames] = useState([]);
   const navigate = useNavigate();
+  const isMountedRef = useRef(true);
 
   const normalizedEmail = profile?.email
     ? profile.email.trim().toLowerCase()
@@ -116,6 +127,52 @@ const ProductEditor = ({
     normalizedEmail === DEFAULT_ADMIN_EMAIL &&
     roleKey === "admin";
   const isSeller = isAdmin || roleKey === "seller";
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!Array.isArray(availableCategories)) {
+      return;
+    }
+    setCategories(availableCategories);
+    setCategoryStatus("success");
+  }, [availableCategories]);
+
+  const refreshCategoryOptions = useCallback(async () => {
+    if (!isMountedRef.current) {
+      return;
+    }
+    setCategoryStatus("loading");
+    setCategoryFeedback("");
+    try {
+      const { data } = await apiClient.get("/api/categories");
+      if (!isMountedRef.current) {
+        return;
+      }
+      setCategories(Array.isArray(data?.categories) ? data.categories : []);
+      setCategoryStatus("success");
+    } catch (error) {
+      if (!isMountedRef.current) {
+        return;
+      }
+      setCategoryStatus("error");
+      setCategoryFeedback(
+        error.response?.data?.message ??
+          "We could not load categories right now."
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    if (Array.isArray(availableCategories)) {
+      return;
+    }
+    refreshCategoryOptions();
+  }, [availableCategories, refreshCategoryOptions]);
 
   const updateImagePreviews = (nextPreviews) => {
     const normalizedNext = Array.isArray(nextPreviews) ? nextPreviews : [];
@@ -221,6 +278,19 @@ const ProductEditor = ({
     };
   }, [productId]);
 
+  useEffect(() => {
+    if (!product) {
+      setSelectedCategoryIds([]);
+      setDraftCategoryNames([]);
+      return;
+    }
+    const nextIds = Array.isArray(product.category_ids)
+      ? product.category_ids.filter(Boolean)
+      : [];
+    setSelectedCategoryIds(nextIds);
+    setDraftCategoryNames([]);
+  }, [product]);
+
   const canEditProduct = useMemo(() => {
     if (!product) {
       return false;
@@ -290,6 +360,11 @@ const ProductEditor = ({
     }
     setFormStatus("idle");
     setFormFeedback("");
+    const nextIds = Array.isArray(product.category_ids)
+      ? product.category_ids.filter(Boolean)
+      : [];
+    setSelectedCategoryIds(nextIds);
+    setDraftCategoryNames([]);
   };
 
   const handleSubmit = async (event) => {
@@ -337,6 +412,14 @@ const ProductEditor = ({
     formData.append("name", name);
     formData.append("price", numericPrice.toString());
     formData.append("description", description);
+    formData.append(
+      "category_ids",
+      JSON.stringify(selectedCategoryIds ?? [])
+    );
+    formData.append(
+      "new_categories",
+      JSON.stringify(draftCategoryNames ?? [])
+    );
     selectedImageFiles.forEach((file) => formData.append("images", file));
     formData.append("retain_images", JSON.stringify(retainedFilenames));
 
@@ -366,8 +449,20 @@ const ProductEditor = ({
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
+        setSelectedCategoryIds(
+          Array.isArray(updatedProduct.category_ids)
+            ? updatedProduct.category_ids.filter(Boolean)
+            : []
+        );
+        setDraftCategoryNames([]);
         if (typeof onProductUpdated === "function") {
           onProductUpdated(updatedProduct);
+        }
+        if (!Array.isArray(availableCategories)) {
+          await refreshCategoryOptions();
+        }
+        if (typeof onCategoriesChanged === "function") {
+          onCategoriesChanged();
         }
       }
       setFormStatus("success");
@@ -646,6 +741,20 @@ const ProductEditor = ({
               </div>
             )}
           </div>
+        )}
+
+        <CategorySelector
+          categories={categories}
+          selectedCategoryIds={selectedCategoryIds}
+          onSelectedCategoryIdsChange={setSelectedCategoryIds}
+          draftCategories={draftCategoryNames}
+          onDraftCategoriesChange={setDraftCategoryNames}
+          label="Categories"
+          helperText='Select existing tasting families or queue new ones. Every creation still appears under "All".'
+          disabled={formStatus === "loading" || categoryStatus === "loading"}
+        />
+        {categoryFeedback && categoryStatus === "error" && (
+          <p className="form-feedback form-feedback--error">{categoryFeedback}</p>
         )}
 
         <label className="input-group">

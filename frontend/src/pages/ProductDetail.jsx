@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -6,6 +6,26 @@ import { DEFAULT_ADMIN_EMAIL } from "../constants";
 import { formatEuro } from "../utils/currency";
 import { formatPublishedDate } from "../utils/dates";
 import ProductEditor from "../components/ProductEditor";
+
+const normalizeCategoriesList = (categoryList = []) => {
+  const catalog = new Map();
+  categoryList.forEach((category) => {
+    if (!category) {
+      return;
+    }
+    const rawId = category.id ?? category._id ?? category.slug ?? category.name ?? "";
+    const normalizedId = typeof rawId === "string" ? rawId.trim() : "";
+    if (!normalizedId) {
+      return;
+    }
+    catalog.set(normalizedId, { ...category, id: normalizedId });
+  });
+  return Array.from(catalog.values()).sort((a, b) =>
+    (a?.name ?? "").localeCompare(b?.name ?? "", undefined, {
+      sensitivity: "base",
+    })
+  );
+};
 
 const ProductDetail = () => {
   const { productId } = useParams();
@@ -15,6 +35,20 @@ const ProductDetail = () => {
   const [error, setError] = useState("");
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [categories, setCategories] = useState([]);
+
+  const applyCategories = useCallback((nextCategories) => {
+    setCategories(normalizeCategoriesList(nextCategories ?? []));
+  }, []);
+
+  const appendCategories = useCallback((additionalCategories) => {
+    if (!additionalCategories || additionalCategories.length === 0) {
+      return;
+    }
+    setCategories((prev) =>
+      normalizeCategoriesList([...prev, ...additionalCategories])
+    );
+  }, []);
 
   const normalizedEmail = profile?.email
     ? profile.email.trim().toLowerCase()
@@ -27,6 +61,18 @@ const ProductDetail = () => {
     roleKey === "admin";
   const isSeller = isAdmin || roleKey === "seller";
 
+  const refreshCategories = useCallback(async () => {
+    try {
+      const { data } = await apiClient.get("/api/categories");
+      const nextCategories = Array.isArray(data?.categories)
+        ? data.categories
+        : [];
+      applyCategories(nextCategories);
+    } catch (err) {
+      // Non-blocking: category refresh failures should not break editing flow.
+    }
+  }, [applyCategories]);
+
   useEffect(() => {
     let isMounted = true;
     const fetchProduct = async () => {
@@ -37,7 +83,11 @@ const ProductDetail = () => {
         if (!isMounted) {
           return;
         }
-        setProduct(data?.product ?? null);
+        const loadedProduct = data?.product ?? null;
+        setProduct(loadedProduct);
+        if (loadedProduct?.categories) {
+          appendCategories(loadedProduct.categories);
+        }
         setStatus("success");
       } catch (err) {
         if (!isMounted) {
@@ -62,6 +112,13 @@ const ProductDetail = () => {
       isMounted = false;
     };
   }, [productId]);
+
+  useEffect(() => {
+    if (!isSeller) {
+      return;
+    }
+    refreshCategories();
+  }, [isSeller, refreshCategories]);
 
   const imageUrls = useMemo(() => {
     if (!product) {
@@ -155,6 +212,10 @@ const ProductDetail = () => {
       return;
     }
     setProduct(updatedProduct);
+    if (Array.isArray(updatedProduct.categories)) {
+      appendCategories(updatedProduct.categories);
+    }
+    refreshCategories();
   };
 
   return (
@@ -207,6 +268,18 @@ const ProductDetail = () => {
               ? product.description
               : "Awaiting tasting notes from our artisans."}
           </p>
+          {Array.isArray(product.categories) && product.categories.length > 0 && (
+            <div className="product-detail__categories">
+              {product.categories.map((category) => (
+                <span
+                  key={category.id}
+                  className="product-detail__category-pill"
+                >
+                  {category.name}
+                </span>
+              ))}
+            </div>
+          )}
           <dl className="product-detail__meta">
             {product.created_by_name && (
               <div>
@@ -260,6 +333,8 @@ const ProductDetail = () => {
               layout="modal"
               onClose={handleCloseEditor}
               onProductUpdated={handleProductUpdated}
+              availableCategories={categories}
+              onCategoriesChanged={refreshCategories}
             />
           </div>
         </div>

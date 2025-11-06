@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -6,6 +6,28 @@ import { DEFAULT_ADMIN_EMAIL } from "../constants";
 import { formatEuro } from "../utils/currency";
 import { formatPublishedDate } from "../utils/dates";
 import ProductEditor from "../components/ProductEditor";
+import CategorySelector from "../components/CategorySelector";
+
+const normalizeCategoriesList = (categoryList = []) => {
+  const catalog = new Map();
+  categoryList.forEach((category) => {
+    if (!category) {
+      return;
+    }
+    const categoryId =
+      category.id ?? category._id ?? category.slug ?? category.name ?? "";
+    const trimmedId = typeof categoryId === "string" ? categoryId.trim() : "";
+    if (!trimmedId) {
+      return;
+    }
+    catalog.set(trimmedId, { ...category, id: trimmedId });
+  });
+  return Array.from(catalog.values()).sort((a, b) =>
+    (a?.name ?? "").localeCompare(b?.name ?? "", undefined, {
+      sensitivity: "base",
+    })
+  );
+};
 
 const initialFormState = {
   name: "",
@@ -54,6 +76,56 @@ const Products = () => {
   const [editingProductId, setEditingProductId] = useState(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const modalContainerRef = useRef(null);
+  const [categories, setCategories] = useState([]);
+  const [categoriesStatus, setCategoriesStatus] = useState("idle");
+  const [categoriesError, setCategoriesError] = useState("");
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState("all");
+  const [selectedFormCategoryIds, setSelectedFormCategoryIds] = useState([]);
+  const [draftFormCategories, setDraftFormCategories] = useState([]);
+  const [isCategoryFormOpen, setIsCategoryFormOpen] = useState(false);
+  const [categoryFormName, setCategoryFormName] = useState("");
+  const [categoryFormStatus, setCategoryFormStatus] = useState("idle");
+  const [categoryFormFeedback, setCategoryFormFeedback] = useState("");
+
+  const applyCategories = useCallback((nextCategories) => {
+    setCategories(normalizeCategoriesList(nextCategories ?? []));
+  }, []);
+
+  const appendCategories = useCallback((additionalCategories) => {
+    if (!additionalCategories || additionalCategories.length === 0) {
+      return;
+    }
+    setCategories((prev) =>
+      normalizeCategoriesList([...prev, ...additionalCategories])
+    );
+  }, []);
+
+  const categoryProductCounts = useMemo(() => {
+    const counts = new Map();
+    products.forEach((product) => {
+      const ids = Array.isArray(product.category_ids)
+        ? product.category_ids
+        : [];
+      ids.forEach((categoryId) => {
+        if (!categoryId) {
+          return;
+        }
+        counts.set(categoryId, (counts.get(categoryId) ?? 0) + 1);
+      });
+    });
+    return counts;
+  }, [products]);
+
+  const filteredProducts = useMemo(() => {
+    if (selectedCategoryFilter === "all") {
+      return products;
+    }
+    return products.filter(
+      (product) =>
+        Array.isArray(product.category_ids) &&
+        product.category_ids.includes(selectedCategoryFilter)
+    );
+  }, [products, selectedCategoryFilter]);
 
   const normalizedEmail = profile?.email
     ? profile.email.trim().toLowerCase()
@@ -78,6 +150,39 @@ const Products = () => {
       });
     };
   }, []);
+
+  const refreshCategories = useCallback(async () => {
+    setCategoriesStatus("loading");
+    setCategoriesError("");
+    try {
+      const { data } = await apiClient.get("/api/categories");
+      const nextCategories = Array.isArray(data?.categories)
+        ? data.categories
+        : [];
+      applyCategories(nextCategories);
+      setCategoriesStatus("success");
+      setSelectedCategoryFilter((currentFilter) => {
+        if (currentFilter === "all") {
+          return currentFilter;
+        }
+        const stillExists = nextCategories.some((category) => {
+          const categoryId = category?.id ?? category?._id;
+          return categoryId === currentFilter;
+        });
+        return stillExists ? currentFilter : "all";
+      });
+    } catch (err) {
+      setCategoriesStatus("error");
+      setCategoriesError(
+        err.response?.data?.message ??
+          "We could not load the category list. Filtering may be limited."
+      );
+    }
+  }, [applyCategories]);
+
+  useEffect(() => {
+    refreshCategories();
+  }, [refreshCategories]);
 
   const updateImagePreviews = (nextPreviews) => {
     const normalizedNext = Array.isArray(nextPreviews) ? nextPreviews : [];
@@ -105,6 +210,8 @@ const Products = () => {
     setFormFeedback("");
     setSelectedImageFiles([]);
     updateImagePreviews([]);
+    setSelectedFormCategoryIds([]);
+    setDraftFormCategories([]);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -113,6 +220,7 @@ const Products = () => {
   useEffect(() => {
     if (!isSeller) {
       setShowUploadForm(false);
+      setIsCategoryFormOpen(false);
       resetUploadState();
     }
   }, [isSeller]);
@@ -176,6 +284,62 @@ const Products = () => {
     resetUploadState();
   };
 
+  const handleSelectCategoryFilter = (categoryId) => {
+    setSelectedCategoryFilter(categoryId);
+  };
+
+  const handleToggleCategoryForm = () => {
+    setIsCategoryFormOpen((prev) => !prev);
+    setCategoryFormName("");
+    setCategoryFormStatus("idle");
+    setCategoryFormFeedback("");
+  };
+
+  const handleCreateCategory = async (event) => {
+    event.preventDefault();
+    if (categoryFormStatus === "loading") {
+      return;
+    }
+
+    const trimmedName = categoryFormName.trim();
+    if (trimmedName.length < 2) {
+      setCategoryFormStatus("error");
+      setCategoryFormFeedback(
+        "Category names need at least two characters to stay memorable."
+      );
+      return;
+    }
+
+    setCategoryFormStatus("loading");
+    setCategoryFormFeedback("");
+
+    try {
+      const { data } = await apiClient.post("/api/categories", {
+        name: trimmedName,
+      });
+      setCategoryFormStatus("success");
+      setCategoryFormFeedback(
+        data?.message ?? `"${trimmedName}" is ready for pairing.`
+      );
+      setCategoryFormName("");
+      if (data?.category) {
+        appendCategories([data.category]);
+      }
+      await refreshCategories();
+    } catch (err) {
+      let message =
+        err.response?.data?.message ??
+        "We could not create that category. Please try again.";
+      if (err?.response?.status === 401) {
+        message = "Your session expired. Please sign in again to continue.";
+        logout();
+        navigate("/login", { replace: true });
+      }
+      setCategoryFormStatus("error");
+      setCategoryFormFeedback(message);
+    }
+  };
+
   const handleFieldChange = (event) => {
     const { name, value } = event.target;
     setFormValues((prev) => ({ ...prev, [name]: value }));
@@ -231,6 +395,14 @@ const Products = () => {
     formData.append("name", name);
     formData.append("price", numericPrice.toString());
     formData.append("description", description);
+    formData.append(
+      "category_ids",
+      JSON.stringify(selectedFormCategoryIds ?? [])
+    );
+    formData.append(
+      "new_categories",
+      JSON.stringify(draftFormCategories ?? [])
+    );
     selectedImageFiles.forEach((file) => formData.append("images", file));
 
     const config = {
@@ -252,6 +424,14 @@ const Products = () => {
         state: "success",
         message: data?.message ?? "Product added successfully.",
       });
+      if (
+        createdProduct &&
+        Array.isArray(createdProduct.categories) &&
+        createdProduct.categories.length > 0
+      ) {
+        appendCategories(createdProduct.categories);
+      }
+      await refreshCategories();
       resetUploadState();
       setShowUploadForm(false);
     } catch (err) {
@@ -296,6 +476,7 @@ const Products = () => {
         state: "success",
         message: data?.message ?? "Product removed successfully.",
       });
+      await refreshCategories();
     } catch (err) {
       let message =
         err.response?.data?.message ??
@@ -364,6 +545,13 @@ const Products = () => {
       state: "success",
       message: "Product updated successfully.",
     });
+    if (
+      Array.isArray(updatedProduct.categories) &&
+      updatedProduct.categories.length > 0
+    ) {
+      appendCategories(updatedProduct.categories);
+    }
+    refreshCategories();
   };
 
   const handleEditProduct = (event, productId) => {
@@ -396,6 +584,13 @@ const Products = () => {
           <div className="products-hero__actions">
             <button
               type="button"
+              className="button button--ghost"
+              onClick={handleToggleCategoryForm}
+            >
+              {isCategoryFormOpen ? "Close Category Form" : "New Category"}
+            </button>
+            <button
+              type="button"
               className="button button--gradient"
               onClick={handleToggleUpload}
             >
@@ -404,6 +599,107 @@ const Products = () => {
           </div>
         )}
       </header>
+
+      <section className="category-filter" aria-label="Product categories">
+        <div className="category-filter__list">
+          {[
+            { id: "all", name: "All", product_count: products.length },
+            ...categories,
+          ].map((category) => {
+            const categoryId =
+              category?.id ?? category?._id ?? (category?.name === "All" ? "all" : null);
+            if (!categoryId) {
+              return null;
+            }
+            const isAll = categoryId === "all";
+            const label = isAll ? "All" : category?.name || "Untitled";
+            const count = isAll
+              ? products.length
+              : categoryProductCounts.get(categoryId) ??
+                category?.product_count ??
+                0;
+            const isActive = selectedCategoryFilter === categoryId;
+            return (
+              <button
+                type="button"
+                key={categoryId}
+                className={`category-filter__option${
+                  isActive ? " category-filter__option--active" : ""
+                }`}
+                onClick={() => handleSelectCategoryFilter(categoryId)}
+              >
+                <span>{label}</span>
+                <span className="category-filter__count">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+        {categoriesStatus === "loading" ? (
+          <p className="category-filter__feedback">Refreshing categories...</p>
+        ) : categoriesError ? (
+          <p className="category-filter__feedback category-filter__feedback--error">
+            {categoriesError}
+          </p>
+        ) : null}
+      </section>
+
+      {isSeller && isCategoryFormOpen && (
+        <section className="category-manager">
+          <div className="category-manager__header">
+            <h2>Catalog Categories</h2>
+            <p>
+              Name a family of products to keep the atelier neatly arranged. Once
+              saved, everyone can filter by it instantly.
+            </p>
+          </div>
+          <form className="category-manager__form" onSubmit={handleCreateCategory}>
+            <label className="input-group">
+              <span>Category Name</span>
+              <input
+                type="text"
+                value={categoryFormName}
+                onChange={(event) => {
+                  setCategoryFormName(event.target.value);
+                  setCategoryFormStatus("idle");
+                  setCategoryFormFeedback("");
+                }}
+                placeholder="Frozen Desserts"
+                required
+              />
+            </label>
+            <div className="category-manager__actions">
+              <button
+                type="submit"
+                className="button button--gradient"
+                disabled={categoryFormStatus === "loading"}
+              >
+                {categoryFormStatus === "loading" ? "Saving..." : "Save Category"}
+              </button>
+              <button
+                type="button"
+                className="button button--outline"
+                onClick={handleToggleCategoryForm}
+                disabled={categoryFormStatus === "loading"}
+              >
+                Cancel
+              </button>
+            </div>
+            {categoryFormFeedback ? (
+              <p
+                className={`form-feedback${
+                  categoryFormStatus === "error"
+                    ? " form-feedback--error"
+                    : categoryFormStatus === "success"
+                    ? " form-feedback--success"
+                    : ""
+                }`}
+              >
+                {categoryFormFeedback}
+              </p>
+            ) : null}
+          </form>
+        </section>
+      )}
 
       {isSeller && (
         <section
@@ -487,6 +783,16 @@ const Products = () => {
                   </div>
                 </div>
               )}
+              <CategorySelector
+                categories={categories}
+                selectedCategoryIds={selectedFormCategoryIds}
+                onSelectedCategoryIdsChange={setSelectedFormCategoryIds}
+                draftCategories={draftFormCategories}
+                onDraftCategoriesChange={setDraftFormCategories}
+                label="Categories"
+                helperText='Toggle existing labels or add new ones to keep the boutique organized. All items remain visible under "All".'
+                disabled={formStatus === "loading" || categoriesStatus === "loading"}
+              />
               <label className="input-group product-upload__description">
                 <span>Tasting Notes</span>
                 <textarea
@@ -562,13 +868,20 @@ const Products = () => {
               galleries, tasting notes, and publishing history.
             </p>
           </header>
-          <div className="product-grid product-grid--elevated">
-            {products.map((product) => {
-              const priceLabel = formatEuro(product.price);
-              const rawPublisherName =
-                typeof product.created_by_name === "string"
-                  ? product.created_by_name.trim()
-                  : "";
+          {filteredProducts.length === 0 ? (
+            <p className="page__status">
+              {selectedCategoryFilter === "all"
+                ? "No creations have been plated yet. Be the first to add one!"
+                : "Nothing has been curated for this category yet. Try another filter or add a product."}
+            </p>
+          ) : (
+            <div className="product-grid product-grid--elevated">
+              {filteredProducts.map((product) => {
+                const priceLabel = formatEuro(product.price);
+                const rawPublisherName =
+                  typeof product.created_by_name === "string"
+                    ? product.created_by_name.trim()
+                    : "";
               const publisherName =
                 rawPublisherName.length > 0
                   ? rawPublisherName
@@ -585,11 +898,11 @@ const Products = () => {
               ]
                 .map((url) => (typeof url === "string" ? url.trim() : ""))
                 .filter((url, index, self) => url && self.indexOf(url) === index);
-              const primaryImageUrl = imageUrls[0] ?? "";
-              const createdAtLabel = formatPublishedDate(product.created_at);
+                const primaryImageUrl = imageUrls[0] ?? "";
+                const createdAtLabel = formatPublishedDate(product.created_at);
 
-              return (
-                <article
+                return (
+                  <article
                   key={product.id}
                   className="product-card product-card--elevated"
                   onClick={() => handleOpenProduct(product.id)}
@@ -635,6 +948,19 @@ const Products = () => {
                         {imageUrls.length || 1} photograph(s)
                       </span>
                     </div>
+                    {Array.isArray(product.categories) &&
+                      product.categories.length > 0 && (
+                        <div className="product-card__categories">
+                          {product.categories.slice(0, 4).map((category) => (
+                            <span
+                              key={`${product.id}-${category.id}`}
+                              className="product-card__category-tag"
+                            >
+                              {category.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     <div className="product-card__footer">
                       <span className="product-card__price">{priceLabel}</span>
                       <button
@@ -670,8 +996,9 @@ const Products = () => {
                   </div>
                 </article>
               );
-            })}
-          </div>
+              })}
+            </div>
+          )}
         </section>
       )}
       {isEditModalOpen && editingProductId && (
@@ -697,6 +1024,8 @@ const Products = () => {
               layout="modal"
               onClose={handleCloseEditor}
               onProductUpdated={handleProductUpdated}
+              availableCategories={categories}
+              onCategoriesChanged={refreshCategories}
             />
           </div>
         </div>

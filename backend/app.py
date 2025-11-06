@@ -1,7 +1,9 @@
 import json
 import os
+import re
+import unicodedata
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from uuid import uuid4
 from urllib.parse import urljoin, urlparse
 
@@ -265,7 +267,203 @@ def create_app() -> Flask:
             "avatar_url": build_upload_url(user_document.get("avatar_filename")),
         }
 
-    def serialize_product(product_document, user_names=None):
+    def normalize_category_name(value: Optional[str]) -> str:
+        if value is None:
+            return ""
+        condensed = " ".join(str(value).split())
+        return condensed.strip()
+
+    def slugify_category_name(value: Optional[str]) -> str:
+        normalized_name = normalize_category_name(value).lower()
+        ascii_name = (
+            unicodedata.normalize("NFKD", normalized_name)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+        slug = re.sub(r"[^a-z0-9]+", "-", ascii_name).strip("-")
+        if not slug:
+            slug = uuid4().hex
+        return slug
+
+    def parse_json_list(value):
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            return [item for item in value]
+        if isinstance(value, (bytes, bytearray)):
+            try:
+                value = value.decode("utf-8")
+            except UnicodeDecodeError:
+                value = ""
+        if isinstance(value, str):
+            candidate = value.strip()
+            if not candidate:
+                return []
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+            if "," in candidate:
+                return [
+                    item.strip()
+                    for item in candidate.split(",")
+                    if item and item.strip()
+                ]
+            return [candidate]
+        return []
+
+    def normalize_object_id_list(values) -> List[ObjectId]:
+        normalized_ids: List[ObjectId] = []
+        if not values:
+            return normalized_ids
+        for value in values:
+            if isinstance(value, ObjectId):
+                normalized_ids.append(value)
+                continue
+            try:
+                normalized_ids.append(ObjectId(str(value)))
+            except (InvalidId, TypeError):
+                continue
+        return normalized_ids
+
+    def fetch_categories_by_ids(category_ids) -> Dict[ObjectId, Dict]:
+        if not category_ids:
+            return {}
+        normalized_ids: List[ObjectId] = []
+        seen: Set[ObjectId] = set()
+        for value in category_ids:
+            current_id = value if isinstance(value, ObjectId) else None
+            if not current_id:
+                try:
+                    current_id = ObjectId(str(value))
+                except (InvalidId, TypeError):
+                    continue
+            if current_id in seen:
+                continue
+            seen.add(current_id)
+            normalized_ids.append(current_id)
+        if not normalized_ids:
+            return {}
+        category_documents = db.categories.find({"_id": {"$in": normalized_ids}})
+        return {document["_id"]: document for document in category_documents}
+
+    def serialize_category(category_document, product_counts=None):
+        if not category_document:
+            return {}
+
+        created_at = category_document.get("created_at")
+        product_count = 0
+        if product_counts is not None:
+            product_count = int(
+                product_counts.get(category_document.get("_id"), 0) or 0
+            )
+
+        return {
+            "id": str(category_document.get("_id")),
+            "name": category_document.get("name", ""),
+            "slug": category_document.get("slug", ""),
+            "created_by": category_document.get("created_by", "") or "",
+            "created_at": created_at.isoformat()
+            if isinstance(created_at, datetime)
+            else None,
+            "product_count": product_count,
+        }
+
+    def get_or_create_category(category_name: str, creator_email: str):
+        normalized_name = normalize_category_name(category_name)
+        if len(normalized_name) < 2:
+            return None, False, "Category names must be at least two characters long."
+        slug = slugify_category_name(normalized_name)
+        existing = db.categories.find_one({"slug": slug})
+        if existing:
+            if normalized_name and normalized_name != existing.get("name"):
+                db.categories.update_one(
+                    {"_id": existing["_id"]}, {"$set": {"name": normalized_name}}
+                )
+                existing["name"] = normalized_name
+            return existing, False, None
+
+        document = {
+            "name": normalized_name,
+            "slug": slug,
+            "created_at": datetime.utcnow(),
+            "created_by": normalize_email(creator_email),
+        }
+        try:
+            insert_result = db.categories.insert_one(document)
+        except Exception:
+            existing = db.categories.find_one({"slug": slug})
+            if existing:
+                return existing, False, None
+            raise
+        created = db.categories.find_one({"_id": insert_result.inserted_id})
+        return created, True, None
+
+    def resolve_category_ids_from_payload(payload: Dict, creator_email: str):
+        payload = payload or {}
+        raw_existing = payload.get("category_ids")
+        fallback_existing = payload.get("categories")
+        raw_new = payload.get("new_categories")
+
+        existing_candidates = parse_json_list(raw_existing)
+        if not existing_candidates and fallback_existing:
+            existing_candidates = parse_json_list(fallback_existing)
+        new_candidates = [
+            normalize_category_name(value)
+            for value in parse_json_list(raw_new)
+            if isinstance(value, (str, bytes, bytearray))
+        ]
+
+        normalized_existing_ids = normalize_object_id_list(existing_candidates)
+        resolved_ids: List[ObjectId] = []
+        seen: Set[ObjectId] = set()
+
+        if normalized_existing_ids:
+            cursor = db.categories.find({"_id": {"$in": normalized_existing_ids}})
+            for document in cursor:
+                category_id = document["_id"]
+                if category_id in seen:
+                    continue
+                seen.add(category_id)
+                resolved_ids.append(category_id)
+
+        for candidate in new_candidates:
+            if not candidate:
+                continue
+            category_document, _, category_error = get_or_create_category(
+                candidate, creator_email
+            )
+            if category_error:
+                return None, category_error
+            if category_document and category_document["_id"] not in seen:
+                resolved_ids.append(category_document["_id"])
+                seen.add(category_document["_id"])
+
+        return resolved_ids, None
+
+    def build_category_product_counts():
+        counts: Dict[ObjectId, int] = {}
+        try:
+            pipeline = [
+                {"$match": {"category_ids": {"$exists": True, "$ne": []}}},
+                {"$unwind": "$category_ids"},
+                {"$group": {"_id": "$category_ids", "count": {"$sum": 1}}},
+            ]
+            for entry in db.products.aggregate(pipeline):
+                category_id = entry.get("_id")
+                if not category_id:
+                    continue
+                try:
+                    counts[category_id] = int(entry.get("count", 0) or 0)
+                except (TypeError, ValueError):
+                    counts[category_id] = 0
+        except Exception:
+            return counts
+        return counts
+
+    def serialize_product(product_document, user_names=None, category_map=None):
         created_at = product_document.get("created_at")
         try:
             price_value = float(product_document.get("price", 0) or 0)
@@ -309,6 +507,32 @@ def create_app() -> Flask:
 
         primary_image_url = image_urls[0] if image_urls else ""
 
+        raw_category_ids = product_document.get("category_ids")
+        category_ids: List[ObjectId] = []
+        if isinstance(raw_category_ids, list):
+            for raw_id in raw_category_ids:
+                if isinstance(raw_id, ObjectId):
+                    category_ids.append(raw_id)
+                else:
+                    try:
+                        category_ids.append(ObjectId(str(raw_id)))
+                    except (InvalidId, TypeError):
+                        continue
+
+        resolved_category_map = category_map or fetch_categories_by_ids(category_ids)
+        serialized_categories = []
+        for category_id in category_ids:
+            category_document = resolved_category_map.get(category_id)
+            if not category_document:
+                continue
+            serialized_categories.append(
+                {
+                    "id": str(category_document.get("_id")),
+                    "name": category_document.get("name", ""),
+                    "slug": category_document.get("slug", ""),
+                }
+            )
+
         owner_email = normalize_email(product_document.get("created_by"))
         owner_name = ""
         if user_names and owner_email in user_names:
@@ -333,6 +557,8 @@ def create_app() -> Flask:
             else None,
             "created_by": owner_email,
             "created_by_name": owner_name,
+            "category_ids": [str(category_id) for category_id in category_ids],
+            "categories": serialized_categories,
         }
 
     def fetch_product(product_id: str):
@@ -617,8 +843,27 @@ def create_app() -> Flask:
         if DEFAULT_ADMIN_EMAIL in author_emails:
             user_names.setdefault(DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_NAME)
 
+        category_ids: Set[ObjectId] = set()
+        for document in product_docs:
+            raw_category_ids = document.get("category_ids")
+            if not isinstance(raw_category_ids, list):
+                continue
+            for raw_id in raw_category_ids:
+                if isinstance(raw_id, ObjectId):
+                    category_ids.add(raw_id)
+                    continue
+                try:
+                    category_ids.add(ObjectId(str(raw_id)))
+                except (InvalidId, TypeError):
+                    continue
+
+        category_map = fetch_categories_by_ids(category_ids)
+
         products = [
-            serialize_product(document, user_names=user_names) for document in product_docs
+            serialize_product(
+                document, user_names=user_names, category_map=category_map
+            )
+            for document in product_docs
         ]
         return jsonify({"products": products})
 
@@ -637,8 +882,14 @@ def create_app() -> Flask:
         if owner_email == DEFAULT_ADMIN_EMAIL:
             user_names.setdefault(DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_NAME)
 
+        category_map = fetch_categories_by_ids(product_document.get("category_ids"))
+
         return jsonify(
-            {"product": serialize_product(product_document, user_names=user_names)}
+            {
+                "product": serialize_product(
+                    product_document, user_names=user_names, category_map=category_map
+                )
+            }
         )
 
     @app.route("/api/products", methods=["POST"])
@@ -681,24 +932,37 @@ def create_app() -> Flask:
         if not saved_filenames:
             return jsonify({"message": "Please upload at least one image for this product."}), 400
 
+        creator_email = normalize_email(current_user.get("email"))
+        resolved_category_ids, category_error = resolve_category_ids_from_payload(
+            payload, creator_email
+        )
+        if category_error:
+            remove_product_image(saved_filenames)
+            return jsonify({"message": category_error}), 400
+
         product_document = {
             "name": name,
             "description": description,
             "price": price_value,
             "created_at": datetime.utcnow(),
-            "created_by": normalize_email(current_user.get("email")),
+            "created_by": creator_email,
             "image_filenames": saved_filenames,
             "image_filename": saved_filenames[0],
         }
+        if resolved_category_ids:
+            product_document["category_ids"] = resolved_category_ids
 
         result = db.products.insert_one(product_document)
         created_product = db.products.find_one({"_id": result.inserted_id})
+        category_map = fetch_categories_by_ids(created_product.get("category_ids"))
 
         return (
             jsonify(
                 {
                     "message": "Product added successfully.",
-                    "product": serialize_product(created_product),
+                    "product": serialize_product(
+                        created_product, category_map=category_map
+                    ),
                 }
             ),
             201,
@@ -818,6 +1082,18 @@ def create_app() -> Flask:
                 return jsonify({"message": "Price must be greater than zero."}), 400
             updates["price"] = price_value
 
+        categories_changed = any(
+            key in payload for key in ("category_ids", "new_categories", "categories")
+        )
+        if categories_changed:
+            owner_email = normalize_email(current_user.get("email"))
+            resolved_category_ids, category_error = resolve_category_ids_from_payload(
+                payload, owner_email
+            )
+            if category_error:
+                return jsonify({"message": category_error}), 400
+            updates["category_ids"] = resolved_category_ids
+
         saved_new_filenames, image_error = save_product_images(incoming_files)
         if image_error:
             return jsonify({"message": image_error}), 400
@@ -869,7 +1145,12 @@ def create_app() -> Flask:
         return jsonify(
             {
                 "message": "Product updated successfully.",
-                "product": serialize_product(updated_product),
+                "product": serialize_product(
+                    updated_product,
+                    category_map=fetch_categories_by_ids(
+                        updated_product.get("category_ids")
+                    ),
+                ),
             }
         )
 
@@ -904,6 +1185,56 @@ def create_app() -> Flask:
         remove_product_image(stored_filenames)
 
         return jsonify({"message": "Product removed successfully."})
+
+    # Categories
+    @app.route("/api/categories", methods=["GET"])
+    def list_categories_route():
+        category_documents = list(db.categories.find().sort("name", 1))
+        product_counts = build_category_product_counts()
+        categories = [
+            serialize_category(document, product_counts=product_counts)
+            for document in category_documents
+        ]
+        return jsonify({"categories": categories})
+
+    @app.route("/api/categories", methods=["POST"])
+    @jwt_required()
+    def create_category_route():
+        current_user, permission_error = require_role("seller", "admin")
+        if permission_error:
+            return permission_error
+
+        payload = request.get_json(silent=True) or {}
+        name_value = normalize_category_name(payload.get("name"))
+        if len(name_value) < 2:
+            return jsonify({"message": "Please provide a category name with at least two characters."}), 400
+
+        creator_email = normalize_email(current_user.get("email"))
+        category_document, was_created, category_error = get_or_create_category(
+            name_value, creator_email
+        )
+        if category_error:
+            return jsonify({"message": category_error}), 400
+
+        product_counts = build_category_product_counts()
+        message = (
+            "Category created successfully."
+            if was_created
+            else "That category already exists, so we re-used it."
+        )
+        status_code = 201 if was_created else 200
+
+        return (
+            jsonify(
+                {
+                    "message": message,
+                    "category": serialize_category(
+                        category_document, product_counts=product_counts
+                    ),
+                }
+            ),
+            status_code,
+        )
 
     # Checkout
     @app.route("/api/checkout", methods=["POST"])
