@@ -934,6 +934,98 @@
   cursor: not-allowed;
 }
 
+.variation-editor {
+  border: 1px solid rgba(169, 255, 124, 0.22);
+  border-radius: 24px;
+  padding: 1.25rem;
+  background: rgba(7, 14, 12, 0.55);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.variation-editor__header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.82rem;
+  color: rgba(226, 248, 220, 0.85);
+}
+
+.variation-editor__helper {
+  margin: 0;
+  font-size: 0.82rem;
+  color: rgba(226, 248, 220, 0.7);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.variation-editor__empty {
+  margin: 0;
+  font-size: 0.9rem;
+  color: rgba(226, 248, 220, 0.75);
+}
+
+.variation-editor__list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.variation-editor__item {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.variation-editor__item input {
+  flex: 1;
+  min-width: 220px;
+  border-radius: 16px;
+  border: 1px solid rgba(169, 255, 124, 0.2);
+  background: rgba(5, 10, 8, 0.8);
+  color: var(--text-primary);
+  padding: 0.65rem 0.9rem;
+  font-family: inherit;
+}
+
+.variation-editor__remove {
+  border: 1px solid rgba(255, 120, 120, 0.4);
+  border-radius: 999px;
+  padding: 0.35rem 0.95rem;
+  background: rgba(60, 12, 12, 0.8);
+  color: rgba(255, 214, 214, 0.9);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: transform 0.2s var(--ease-out), border-color 0.2s var(--ease-out);
+}
+
+.variation-editor__remove:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(255, 138, 138, 0.8);
+}
+
+.variation-editor__remove:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.variation-editor__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.variation-editor__limit {
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(226, 248, 220, 0.6);
+}
+
 .products-showcase {
   display: grid;
   gap: clamp(1.5rem, 4vw, 2.75rem);
@@ -1215,6 +1307,29 @@
   text-transform: uppercase;
   color: rgba(226, 248, 220, 0.85);
   background: rgba(8, 16, 14, 0.65);
+}
+
+.product-card__variations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+.product-card__variation-chip {
+  border-radius: 999px;
+  border: 1px solid rgba(130, 210, 255, 0.35);
+  padding: 0.18rem 0.6rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(210, 240, 255, 0.9);
+  background: rgba(12, 20, 24, 0.65);
+}
+
+.product-card__variation-chip--more {
+  border-style: dashed;
+  color: rgba(210, 240, 255, 0.7);
 }
 
 .product-card__footer {
@@ -1931,6 +2046,37 @@
   text-transform: uppercase;
   color: rgba(226, 248, 220, 0.88);
   background: rgba(8, 16, 14, 0.7);
+}
+
+.product-detail__variations {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.product-detail__variations h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(226, 248, 220, 0.75);
+}
+
+.product-detail__variation-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.product-detail__variation-pill {
+  border-radius: 999px;
+  border: 1px solid rgba(130, 210, 255, 0.4);
+  padding: 0.3rem 0.9rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(214, 240, 255, 0.9);
+  background: rgba(10, 18, 24, 0.72);
 }
 
 .product-detail__meta {

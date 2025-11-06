@@ -1,1 +1,2 @@
-v1.4.3 Categories can now be removed with in-app controls for quick catalog cleanup
+v1.4.4 Beta Product variations can be defined per item (create/edit + detail views)
+

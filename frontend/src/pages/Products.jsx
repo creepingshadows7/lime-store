@@ -7,6 +7,7 @@ import { formatEuro } from "../utils/currency";
 import { formatPublishedDate } from "../utils/dates";
 import ProductEditor from "../components/ProductEditor";
 import CategorySelector from "../components/CategorySelector";
+import VariationEditor from "../components/VariationEditor";
 
 const normalizeCategoriesList = (categoryList = []) => {
   const catalog = new Map();
@@ -55,6 +56,35 @@ const extractApiMessage = (error, fallback) => {
   return fallback;
 };
 
+const formatVariationPayload = (entries) => {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  const seen = new Set();
+  const result = [];
+  entries.forEach((entry) => {
+    const name = (entry?.name ?? "").trim();
+    if (!name) {
+      return;
+    }
+    const lowered = name.toLowerCase();
+    if (seen.has(lowered)) {
+      return;
+    }
+    seen.add(lowered);
+    const variationId =
+      entry?.id ??
+      entry?._id ??
+      (typeof entry?.tempId === "string" ? entry.tempId : "");
+    const payload = { name };
+    if (variationId) {
+      payload.id = variationId;
+    }
+    result.push(payload);
+  });
+  return result;
+};
+
 const Products = () => {
   const { isAuthenticated, profile, logout } = useAuth();
   const navigate = useNavigate();
@@ -91,6 +121,7 @@ const Products = () => {
     message: "",
   });
   const [categoryBusyId, setCategoryBusyId] = useState("");
+  const [productVariations, setProductVariations] = useState([]);
 
   const applyCategories = useCallback((nextCategories) => {
     setCategories(normalizeCategoriesList(nextCategories ?? []));
@@ -246,6 +277,7 @@ const Products = () => {
     updateImagePreviews([]);
     setSelectedFormCategoryIds([]);
     setDraftFormCategories([]);
+     setProductVariations([]);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -379,7 +411,7 @@ const Products = () => {
       return;
     }
     const confirmed = window.confirm(
-      `Remove the “${categoryName || "Unnamed"}” category from the catalog?`
+      `Remove the "${categoryName || "Unnamed"}" category from the catalog?`
     );
     if (!confirmed) {
       return;
@@ -485,6 +517,10 @@ const Products = () => {
     formData.append(
       "new_categories",
       JSON.stringify(draftFormCategories ?? [])
+    );
+    formData.append(
+      "variations",
+      JSON.stringify(formatVariationPayload(productVariations))
     );
     selectedImageFiles.forEach((file) => formData.append("images", file));
 
@@ -927,6 +963,13 @@ const Products = () => {
                 helperText='Toggle existing labels or add new ones to keep the boutique organized. All items remain visible under "All".'
                 disabled={formStatus === "loading" || categoriesStatus === "loading"}
               />
+              <VariationEditor
+                label="Variations"
+                helperText="Optional: list colorways, sizes, or tasting flights available for this product."
+                variations={productVariations}
+                onChange={setProductVariations}
+                disabled={formStatus === "loading"}
+              />
               <label className="input-group product-upload__description">
                 <span>Tasting Notes</span>
                 <textarea
@@ -1010,12 +1053,12 @@ const Products = () => {
             </p>
           ) : (
             <div className="product-grid product-grid--elevated">
-              {filteredProducts.map((product) => {
-                const priceLabel = formatEuro(product.price);
-                const rawPublisherName =
-                  typeof product.created_by_name === "string"
-                    ? product.created_by_name.trim()
-                    : "";
+            {filteredProducts.map((product) => {
+              const priceLabel = formatEuro(product.price);
+              const rawPublisherName =
+                typeof product.created_by_name === "string"
+                  ? product.created_by_name.trim()
+                  : "";
               const publisherName =
                 rawPublisherName.length > 0
                   ? rawPublisherName
@@ -1032,8 +1075,17 @@ const Products = () => {
               ]
                 .map((url) => (typeof url === "string" ? url.trim() : ""))
                 .filter((url, index, self) => url && self.indexOf(url) === index);
-                const primaryImageUrl = imageUrls[0] ?? "";
-                const createdAtLabel = formatPublishedDate(product.created_at);
+              const primaryImageUrl = imageUrls[0] ?? "";
+              const createdAtLabel = formatPublishedDate(product.created_at);
+              const variationNames = Array.isArray(product.variations)
+                ? product.variations
+                    .map((variation) =>
+                      typeof variation?.name === "string"
+                        ? variation.name.trim()
+                        : ""
+                    )
+                    .filter((name) => Boolean(name))
+                : [];
 
                 return (
                   <article
@@ -1095,6 +1147,23 @@ const Products = () => {
                           ))}
                         </div>
                       )}
+                    {variationNames.length > 0 && (
+                      <div className="product-card__variations">
+                        {variationNames.slice(0, 3).map((variationName, index) => (
+                          <span
+                            key={`${product.id}-variation-${index}`}
+                            className="product-card__variation-chip"
+                          >
+                            {variationName}
+                          </span>
+                        ))}
+                        {variationNames.length > 3 && (
+                          <span className="product-card__variation-chip product-card__variation-chip--more">
+                            +{variationNames.length - 3} more
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <div className="product-card__footer">
                       <span className="product-card__price">{priceLabel}</span>
                       <button

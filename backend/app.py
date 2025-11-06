@@ -96,6 +96,7 @@ def create_app() -> Flask:
     # --- Helpers ---
 
     ALLOWED_USER_ROLES = {"admin", "seller", "standard"}
+    MAX_PRODUCT_VARIATIONS = 25
 
     def normalize_email(value: Optional[str]) -> str:
         return str(value or "").strip().lower()
@@ -313,6 +314,64 @@ def create_app() -> Flask:
                 ]
             return [candidate]
         return []
+
+    def normalize_variations_input(raw_value):
+        if raw_value is None:
+            return [], None
+
+        candidates = []
+        if isinstance(raw_value, (list, tuple, set)):
+            candidates = list(raw_value)
+        elif isinstance(raw_value, (bytes, bytearray)):
+            try:
+                decoded = raw_value.decode("utf-8")
+            except UnicodeDecodeError:
+                decoded = ""
+            candidates = parse_json_list(decoded)
+            if not candidates and decoded.strip():
+                candidates = [decoded.strip()]
+        elif isinstance(raw_value, str):
+            trimmed = raw_value.strip()
+            if not trimmed:
+                candidates = []
+            else:
+                candidates = parse_json_list(trimmed)
+                if not candidates:
+                    candidates = [trimmed]
+        else:
+            candidates = [raw_value]
+
+        normalized: List[Dict[str, str]] = []
+        seen_names = set()
+
+        for entry in candidates:
+            if isinstance(entry, dict):
+                raw_name = entry.get("name")
+                existing_id = entry.get("id") or entry.get("_id") or entry.get("variation_id")
+            else:
+                raw_name = entry
+                existing_id = None
+
+            name = str(raw_name or "").strip()
+            if not name:
+                continue
+            lowered = name.lower()
+            if lowered in seen_names:
+                continue
+            seen_names.add(lowered)
+
+            variation_id = ""
+            if existing_id:
+                variation_id = str(existing_id).strip()
+            if not variation_id:
+                variation_id = uuid4().hex
+
+            normalized.append({"id": variation_id, "name": name})
+
+            if len(normalized) > MAX_PRODUCT_VARIATIONS:
+                return [], f"You can specify up to {MAX_PRODUCT_VARIATIONS} variations per product."
+
+        return normalized, None
 
     def normalize_object_id_list(values) -> List[ObjectId]:
         normalized_ids: List[ObjectId] = []
@@ -533,6 +592,11 @@ def create_app() -> Flask:
                 }
             )
 
+        raw_variations = product_document.get("variations")
+        variations_list: List[Dict[str, str]] = []
+        if isinstance(raw_variations, list):
+            variations_list, _ = normalize_variations_input(raw_variations)
+
         owner_email = normalize_email(product_document.get("created_by"))
         owner_name = ""
         if user_names and owner_email in user_names:
@@ -559,6 +623,7 @@ def create_app() -> Flask:
             "created_by_name": owner_name,
             "category_ids": [str(category_id) for category_id in category_ids],
             "categories": serialized_categories,
+            "variations": variations_list,
         }
 
     def fetch_product(product_id: str):
@@ -940,6 +1005,12 @@ def create_app() -> Flask:
             remove_product_image(saved_filenames)
             return jsonify({"message": category_error}), 400
 
+        variations_payload = payload.get("variations")
+        variations_data, variations_error = normalize_variations_input(variations_payload)
+        if variations_error:
+            remove_product_image(saved_filenames)
+            return jsonify({"message": variations_error}), 400
+
         product_document = {
             "name": name,
             "description": description,
@@ -951,6 +1022,8 @@ def create_app() -> Flask:
         }
         if resolved_category_ids:
             product_document["category_ids"] = resolved_category_ids
+        if variations_data:
+            product_document["variations"] = variations_data
 
         result = db.products.insert_one(product_document)
         created_product = db.products.find_one({"_id": result.inserted_id})
@@ -1093,6 +1166,14 @@ def create_app() -> Flask:
             if category_error:
                 return jsonify({"message": category_error}), 400
             updates["category_ids"] = resolved_category_ids
+
+        if "variations" in payload:
+            variations_data, variations_error = normalize_variations_input(
+                payload.get("variations")
+            )
+            if variations_error:
+                return jsonify({"message": variations_error}), 400
+            updates["variations"] = variations_data
 
         saved_new_filenames, image_error = save_product_images(incoming_files)
         if image_error:

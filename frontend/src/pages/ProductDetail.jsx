@@ -196,6 +196,13 @@ const ProductDetail = () => {
   });
   const priceLabel = formatEuro(product.price);
   const primaryImageUrl = imageUrls[activeImageIndex] ?? "";
+  const variationNames = Array.isArray(product.variations)
+    ? product.variations
+        .map((variation) =>
+          typeof variation?.name === "string" ? variation.name.trim() : ""
+        )
+        .filter((name) => Boolean(name))
+    : [];
 
   const handleOpenEditor = () => {
     if (canManageProduct) {
@@ -278,6 +285,21 @@ const ProductDetail = () => {
                   {category.name}
                 </span>
               ))}
+            </div>
+          )}
+          {variationNames.length > 0 && (
+            <div className="product-detail__variations">
+              <h3>Available Variations</h3>
+              <div className="product-detail__variation-list">
+                {variationNames.map((variationName, index) => (
+                  <span
+                    key={`${product.id}-variation-pill-${index}`}
+                    className="product-detail__variation-pill"
+                  >
+                    {variationName}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
           <dl className="product-detail__meta">

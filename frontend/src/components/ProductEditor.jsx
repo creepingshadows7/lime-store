@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
 import { formatPublishedDate } from "../utils/dates";
 import CategorySelector from "./CategorySelector";
+import VariationEditor from "./VariationEditor";
 
 const initialFormState = {
   name: "",
@@ -45,6 +46,35 @@ const extractApiMessage = (error, fallback) => {
   }
 
   return fallback;
+};
+
+const formatVariationPayload = (entries) => {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  const seen = new Set();
+  const result = [];
+  entries.forEach((entry) => {
+    const name = (entry?.name ?? "").trim();
+    if (!name) {
+      return;
+    }
+    const lowered = name.toLowerCase();
+    if (seen.has(lowered)) {
+      return;
+    }
+    seen.add(lowered);
+    const variationId =
+      entry?.id ??
+      entry?._id ??
+      (typeof entry?.tempId === "string" ? entry.tempId : "");
+    const payload = { name };
+    if (variationId) {
+      payload.id = variationId;
+    }
+    result.push(payload);
+  });
+  return result;
 };
 
 const buildExistingImageState = (product) => {
@@ -114,6 +144,7 @@ const ProductEditor = ({
   const [categoryFeedback, setCategoryFeedback] = useState("");
   const [selectedCategoryIds, setSelectedCategoryIds] = useState([]);
   const [draftCategoryNames, setDraftCategoryNames] = useState([]);
+  const [variations, setVariations] = useState([]);
   const navigate = useNavigate();
   const isMountedRef = useRef(true);
 
@@ -249,6 +280,9 @@ const ProductEditor = ({
             description: loadedProduct.description ?? "",
           });
           setExistingImages(buildExistingImageState(loadedProduct));
+          setVariations(
+            Array.isArray(loadedProduct.variations) ? loadedProduct.variations : []
+          );
           setStatus("success");
         } else {
           setStatus("error");
@@ -365,6 +399,7 @@ const ProductEditor = ({
       : [];
     setSelectedCategoryIds(nextIds);
     setDraftCategoryNames([]);
+    setVariations(Array.isArray(product.variations) ? product.variations : []);
   };
 
   const handleSubmit = async (event) => {
@@ -420,6 +455,10 @@ const ProductEditor = ({
       "new_categories",
       JSON.stringify(draftCategoryNames ?? [])
     );
+    formData.append(
+      "variations",
+      JSON.stringify(formatVariationPayload(variations))
+    );
     selectedImageFiles.forEach((file) => formData.append("images", file));
     formData.append("retain_images", JSON.stringify(retainedFilenames));
 
@@ -455,6 +494,9 @@ const ProductEditor = ({
             : []
         );
         setDraftCategoryNames([]);
+        setVariations(
+          Array.isArray(updatedProduct.variations) ? updatedProduct.variations : []
+        );
         if (typeof onProductUpdated === "function") {
           onProductUpdated(updatedProduct);
         }
@@ -752,6 +794,12 @@ const ProductEditor = ({
           label="Categories"
           helperText='Select existing tasting families or queue new ones. Every creation still appears under "All".'
           disabled={formStatus === "loading" || categoryStatus === "loading"}
+        />
+        <VariationEditor
+          variations={variations}
+          onChange={setVariations}
+          disabled={formStatus === "loading"}
+          helperText="Optional: list colorways, portion sizes, or seasonal riffs."
         />
         {categoryFeedback && categoryStatus === "error" && (
           <p className="form-feedback form-feedback--error">{categoryFeedback}</p>
