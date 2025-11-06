@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -18,6 +18,8 @@ const Admin = () => {
   const [status, setStatus] = useState("idle");
   const [feedback, setFeedback] = useState("");
   const [userStatuses, setUserStatuses] = useState({});
+  const [profileActions, setProfileActions] = useState({});
+  const [expandedUserId, setExpandedUserId] = useState(null);
 
   const normalizedEmail = profile?.email
     ? profile.email.trim().toLowerCase()
@@ -26,6 +28,17 @@ const Admin = () => {
     isAuthenticated &&
     profile?.role === "admin" &&
     normalizedEmail === DEFAULT_ADMIN_EMAIL;
+
+  const formatDateTime = (timestamp) => {
+    if (!timestamp) {
+      return "--";
+    }
+
+    const parsedDate = new Date(timestamp);
+    return Number.isNaN(parsedDate.getTime())
+      ? String(timestamp)
+      : parsedDate.toLocaleString();
+  };
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -71,6 +84,106 @@ const Admin = () => {
 
     fetchUsers();
   }, [isAdmin]);
+
+  const handleProfileToggle = (userId) => {
+    setExpandedUserId((prev) => (prev === userId ? null : userId));
+  };
+
+  const updateProfileActionStatus = (
+    userId,
+    actionKey,
+    state,
+    message = ""
+  ) => {
+    setProfileActions((prev) => ({
+      ...prev,
+      [userId]: {
+        ...(prev[userId] ?? {}),
+        [actionKey]: { state, message },
+      },
+    }));
+  };
+
+  const clearUserActionState = (userId) => {
+    setProfileActions((prev) => {
+      if (!prev[userId]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[userId];
+      return next;
+    });
+
+    setUserStatuses((prev) => {
+      if (!prev[userId]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[userId];
+      return next;
+    });
+  };
+
+  const handleRemoveAvatar = async (userId) => {
+    updateProfileActionStatus(
+      userId,
+      "removeAvatar",
+      "loading",
+      "Removing profile picture..."
+    );
+    setFeedback("");
+
+    try {
+      const { data } = await apiClient.delete(
+        `/api/admin/users/${userId}/avatar`
+      );
+
+      if (data?.user) {
+        setUsers((prev) =>
+          prev.map((user) =>
+            user.id === userId ? { ...user, ...data.user } : user
+          )
+        );
+      }
+
+      updateProfileActionStatus(
+        userId,
+        "removeAvatar",
+        "success",
+        data?.message ?? "Profile picture removed."
+      );
+    } catch (error) {
+      const message =
+        error.response?.data?.message ??
+        "Unable to remove the profile picture right now.";
+      updateProfileActionStatus(userId, "removeAvatar", "error", message);
+    }
+  };
+
+  const handleDeleteUser = async (userId) => {
+    updateProfileActionStatus(
+      userId,
+      "delete",
+      "loading",
+      "Deleting account..."
+    );
+    setFeedback("");
+
+    try {
+      const { data } = await apiClient.delete(`/api/admin/users/${userId}`);
+
+      setUsers((prev) => prev.filter((user) => user.id !== userId));
+      setExpandedUserId((prev) => (prev === userId ? null : prev));
+      clearUserActionState(userId);
+
+      setFeedback(data?.message ?? "Account removed from the directory.");
+      setStatus("success");
+    } catch (error) {
+      const message =
+        error.response?.data?.message ?? "Unable to delete this account.";
+      updateProfileActionStatus(userId, "delete", "error", message);
+    }
+  };
 
   const handleRoleChange = async (userId, nextRole) => {
     const previousUser = users.find((user) => user.id === userId);
@@ -178,6 +291,7 @@ const Admin = () => {
                   <th>Phone</th>
                   <th>Member Since</th>
                   <th>Role</th>
+                  <th className="admin-table__profile-header">Profile</th>
                 </tr>
               </thead>
               <tbody>
@@ -203,84 +317,266 @@ const Admin = () => {
                   const isDefaultAdmin =
                     (user.email ?? "").trim().toLowerCase() ===
                     DEFAULT_ADMIN_EMAIL;
-                  const joinedDate = user.created_at
-                    ? new Date(user.created_at).toLocaleString()
-                    : "--";
+                  const joinedDate = formatDateTime(user.created_at);
+                  const updatedDate = formatDateTime(user.updated_at);
+                  const lastLoginDate = formatDateTime(user.last_login_at);
+                  const isExpanded = expandedUserId === user.id;
+                  const roleLabel =
+                    ROLE_OPTIONS.find(
+                      (option) => option.value === normalizedRole
+                    )?.label ?? "Standard User";
+                  const locationSummary = [
+                    user.address,
+                    user.city,
+                    user.country,
+                  ]
+                    .filter(Boolean)
+                    .join(", ");
+                  const hasAvatar = Boolean(avatarUrl);
+                  const actionState = profileActions[user.id] ?? {};
+                  const removeAvatarStatus = actionState.removeAvatar ?? {
+                    state: "idle",
+                    message: "",
+                  };
+                  const deleteStatus = actionState.delete ?? {
+                    state: "idle",
+                    message: "",
+                  };
+                  const isRemovingAvatar =
+                    removeAvatarStatus.state === "loading";
+                  const isDeleting = deleteStatus.state === "loading";
+                  const profileMessages = [
+                    removeAvatarStatus,
+                    deleteStatus,
+                  ].filter((entry) => entry.message);
+                  const profileDetails = [
+                    { label: "User ID", value: user.id || "--" },
+                    { label: "Role", value: roleLabel },
+                    { label: "Phone", value: user.phone || "--" },
+                    {
+                      label: "Location",
+                      value: locationSummary || "Not shared",
+                    },
+                    { label: "Member Since", value: joinedDate },
+                    { label: "Last Login", value: lastLoginDate },
+                    { label: "Last Updated", value: updatedDate },
+                  ];
+                  const profileNote = user.bio || user.notes || "";
 
                   return (
-                    <tr key={user.id}>
-                      <td>
-                        <div className="admin-table__user">
-                          <div
-                            className="admin-table__avatar"
-                            role="img"
-                            aria-label={`${displayName}'s avatar`}
-                          >
-                            {avatarUrl ? (
-                              <img
-                                src={avatarUrl}
-                                alt=""
-                                className="admin-table__avatar-image"
-                              />
-                            ) : (
-                              <span
-                                className="admin-table__avatar-fallback"
-                                aria-hidden="true"
-                              >
-                                {avatarInitial}
-                              </span>
-                            )}
+                    <Fragment key={user.id}>
+                      <tr key={user.id}>
+                        <td>
+                          <div className="admin-table__user">
+                            <div
+                              className="admin-table__avatar"
+                              role="img"
+                              aria-label={`${displayName}'s avatar`}
+                            >
+                              {avatarUrl ? (
+                                <img
+                                  src={avatarUrl}
+                                  alt=""
+                                  className="admin-table__avatar-image"
+                                />
+                              ) : (
+                                <span
+                                  className="admin-table__avatar-fallback"
+                                  aria-hidden="true"
+                                >
+                                  {avatarInitial}
+                                </span>
+                              )}
+                            </div>
+                            <span className="admin-table__user-name">
+                              {displayName}
+                            </span>
                           </div>
-                          <span className="admin-table__user-name">
-                            {displayName}
-                          </span>
-                        </div>
-                      </td>
-                      <td>{user.email || "--"}</td>
-                      <td>{user.phone || "--"}</td>
-                      <td>{joinedDate}</td>
-                      <td>
-                        <div className="admin-table__role-control">
-                          <select
-                            value={normalizedRole}
-                            onChange={(event) =>
-                              handleRoleChange(user.id, event.target.value)
-                            }
-                            disabled={isSaving}
+                        </td>
+                        <td>{user.email || "--"}</td>
+                        <td>{user.phone || "--"}</td>
+                        <td>{joinedDate}</td>
+                        <td>
+                          <div className="admin-table__role-control">
+                            <select
+                              value={normalizedRole}
+                              onChange={(event) =>
+                                handleRoleChange(user.id, event.target.value)
+                              }
+                              disabled={isSaving}
+                            >
+                              {ROLE_OPTIONS.map((option) => (
+                                <option
+                                  key={option.value}
+                                  value={option.value}
+                                  disabled={
+                                    isDefaultAdmin && option.value !== "admin"
+                                  }
+                                >
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="admin-table__role-indicator">
+                              {normalizedRole === "admin"
+                                ? "Admin"
+                                : normalizedRole === "seller"
+                                ? "Seller"
+                                : "Standard"}
+                            </span>
+                          </div>
+                          {statusEntry.message ? (
+                            <p className={feedbackClass}>
+                              {statusEntry.message}
+                            </p>
+                          ) : null}
+                        </td>
+                        <td className="admin-table__profile-cell">
+                          <button
+                            type="button"
+                            className={`admin-table__profile-button ${
+                              isExpanded ? "is-active" : ""
+                            }`}
+                            onClick={() => handleProfileToggle(user.id)}
                           >
-                            {ROLE_OPTIONS.map((option) => (
-                              <option
-                                key={option.value}
-                                value={option.value}
-                                disabled={
-                                  isDefaultAdmin && option.value !== "admin"
-                                }
-                              >
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                          <span className="admin-table__role-indicator">
-                            {normalizedRole === "admin"
-                              ? "Admin"
-                              : normalizedRole === "seller"
-                              ? "Seller"
-                              : "Standard"}
-                          </span>
-                        </div>
-                        {statusEntry.message ? (
-                          <p className={feedbackClass}>{statusEntry.message}</p>
-                        ) : null}
-                      </td>
-                    </tr>
+                            {isExpanded ? "Hide Profile" : "View Profile"}
+                            <span
+                              className="admin-table__profile-button-icon"
+                              aria-hidden="true"
+                            >
+                              &gt;
+                            </span>
+                          </button>
+                        </td>
+                      </tr>
+                      {isExpanded ? (
+                        <tr className="admin-table__profile-row">
+                          <td colSpan={6}>
+                            <div className="profile-card">
+                              <div className="profile-card__header">
+                                <div className="profile-card__identity">
+                                  <div className="profile-card__avatar">
+                                    {avatarUrl ? (
+                                      <img
+                                        src={avatarUrl}
+                                        alt=""
+                                        className="profile-card__avatar-image"
+                                      />
+                                    ) : (
+                                      <span className="profile-card__avatar-fallback">
+                                        {avatarInitial}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <p className="profile-card__name">
+                                      {displayName}
+                                    </p>
+                                    <p className="profile-card__email">
+                                      {user.email || "Email not provided"}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="profile-card__tags">
+                                  <span className="profile-card__tag">
+                                    {roleLabel}
+                                  </span>
+                                  <span className="profile-card__tag profile-card__tag--muted">
+                                    Member since {joinedDate}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="profile-card__grid">
+                                {profileDetails.map((detail) => (
+                                  <div
+                                    key={`${user.id}-${detail.label}`}
+                                    className="profile-card__fact"
+                                  >
+                                    <p className="profile-card__label">
+                                      {detail.label}
+                                    </p>
+                                    <p className="profile-card__value">
+                                      {detail.value}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                              {profileNote ? (
+                                <div className="profile-card__note">
+                                  <p className="profile-card__label">
+                                    Notes
+                                  </p>
+                                  <p className="profile-card__value">
+                                    {profileNote}
+                                  </p>
+                                </div>
+                              ) : null}
+                              <div className="profile-card__actions">
+                                <button
+                                  type="button"
+                                  className="profile-card__action profile-card__action--ghost"
+                                  onClick={() => handleRemoveAvatar(user.id)}
+                                  disabled={isRemovingAvatar || !hasAvatar}
+                                >
+                                  {isRemovingAvatar
+                                    ? "Removing..."
+                                    : hasAvatar
+                                    ? "Remove Picture"
+                                    : "No Picture"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="profile-card__action profile-card__action--danger"
+                                  onClick={() => handleDeleteUser(user.id)}
+                                  disabled={isDeleting || isDefaultAdmin}
+                                >
+                                  {isDeleting
+                                    ? "Deleting..."
+                                    : isDefaultAdmin
+                                    ? "Locked Admin"
+                                    : "Delete Account"}
+                                </button>
+                              </div>
+                              {profileMessages.length ? (
+                                <div className="profile-card__action-feedback">
+                                  {profileMessages.map((entry, index) => (
+                                    <p
+                                      key={`${user.id}-action-${index}`}
+                                      className={`profile-card__action-message profile-card__action-message--${entry.state}`}
+                                    >
+                                      {entry.message}
+                                    </p>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <div className="profile-card__footer">
+                                <p>
+                                  Last login recorded:{" "}
+                                  <strong>{lastLoginDate}</strong>
+                                </p>
+                                <p>
+                                  Need to take action? Promote, demote, delete,
+                                  or refresh their visuals directly from this
+                                  panel.
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
                   );
                 })}
               </tbody>
             </table>
           </div>
         )}
-        {feedback && status === "error" ? (
-          <p className="form-feedback form-feedback--error admin-page__feedback">
+        {feedback ? (
+          <p
+            className={`form-feedback admin-page__feedback ${
+              status === "error" ? "form-feedback--error" : "form-feedback--success"
+            }`}
+          >
             {feedback}
           </p>
         ) : null}

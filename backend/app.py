@@ -268,6 +268,26 @@ def create_app() -> Flask:
             "avatar_url": build_upload_url(user_document.get("avatar_filename")),
         }
 
+    def serialize_admin_user(user_document) -> Dict[str, str]:
+        if not user_document:
+            return {}
+
+        created_at = user_document.get("created_at")
+        last_login_at = user_document.get("last_login_at")
+
+        return {
+            "id": str(user_document.get("_id")),
+            "name": user_document.get("name", "") or "",
+            "email": user_document.get("email", "") or "",
+            "phone": user_document.get("phone", "") or "",
+            "role": get_user_role(user_document),
+            "created_at": created_at.isoformat() if isinstance(created_at, datetime) else None,
+            "last_login_at": last_login_at.isoformat()
+            if isinstance(last_login_at, datetime)
+            else None,
+            "avatar_url": build_upload_url(user_document.get("avatar_filename")),
+        }
+
     def normalize_category_name(value: Optional[str]) -> str:
         if value is None:
             return ""
@@ -727,6 +747,12 @@ def create_app() -> Flask:
                 },
             )
             user = db.users.find_one({"_id": user["_id"]})
+
+        db.users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"last_login_at": datetime.utcnow()}},
+        )
+        user = db.users.find_one({"_id": user["_id"]})
 
         token = create_access_token(identity=email)
         user_profile = serialize_user_profile(user)
@@ -1383,19 +1409,7 @@ def create_app() -> Flask:
 
         users = []
         for user in db.users.find():
-            role = get_user_role(user)
-            created_at = user.get("created_at")
-            users.append(
-                {
-                    "id": str(user["_id"]),
-                    "name": user.get("name", ""),
-                    "email": user.get("email", ""),
-                    "phone": user.get("phone", ""),
-                    "role": role,
-                    "created_at": created_at.isoformat() if isinstance(created_at, datetime) else None,
-                    "avatar_url": build_upload_url(user.get("avatar_filename")),
-                }
-            )
+            users.append(serialize_admin_user(user))
 
         return jsonify({"users": users})
 
@@ -1435,23 +1449,91 @@ def create_app() -> Flask:
             {"_id": target_object_id}, {"$set": {"role": desired_role}}
         )
         updated_user = db.users.find_one({"_id": target_object_id})
-        created_at = updated_user.get("created_at")
-        role = get_user_role(updated_user)
 
         return jsonify(
             {
                 "message": f"Role updated to {desired_role}.",
-                "user": {
-                    "id": str(updated_user["_id"]),
-                    "name": updated_user.get("name", ""),
-                    "email": updated_user.get("email", ""),
-                    "phone": updated_user.get("phone", ""),
-                    "role": role,
-                    "created_at": created_at.isoformat()
-                    if isinstance(created_at, datetime)
-                    else None,
-                    "avatar_url": build_upload_url(updated_user.get("avatar_filename")),
-                },
+                "user": serialize_admin_user(updated_user),
+            }
+        )
+
+    @app.route("/api/admin/users/<user_id>/avatar", methods=["DELETE"])
+    @jwt_required()
+    def admin_remove_user_avatar(user_id: str):
+        _, admin_error = require_admin_user()
+        if admin_error:
+            return admin_error
+
+        try:
+            target_object_id = ObjectId(user_id)
+        except (InvalidId, TypeError):
+            return jsonify({"message": "Invalid user identifier."}), 400
+
+        user_to_update = db.users.find_one({"_id": target_object_id})
+        if not user_to_update:
+            return jsonify({"message": "User not found."}), 404
+
+        avatar_filename = user_to_update.get("avatar_filename")
+        unset_operations: Dict[str, str] = {}
+
+        if avatar_filename:
+            remove_product_image(avatar_filename)
+            unset_operations["avatar_filename"] = ""
+
+        if user_to_update.get("avatar_updated_at"):
+            unset_operations["avatar_updated_at"] = ""
+
+        if unset_operations:
+            db.users.update_one(
+                {"_id": target_object_id},
+                {"$unset": unset_operations},
+            )
+
+        updated_user = db.users.find_one({"_id": target_object_id})
+        message = (
+            "Profile picture removed successfully."
+            if avatar_filename
+            else "No profile picture on file for this user."
+        )
+
+        return jsonify({"message": message, "user": serialize_admin_user(updated_user)})
+
+    @app.route("/api/admin/users/<user_id>", methods=["DELETE"])
+    @jwt_required()
+    def admin_delete_user(user_id: str):
+        _, admin_error = require_admin_user()
+        if admin_error:
+            return admin_error
+
+        try:
+            target_object_id = ObjectId(user_id)
+        except (InvalidId, TypeError):
+            return jsonify({"message": "Invalid user identifier."}), 400
+
+        user_to_delete = db.users.find_one({"_id": target_object_id})
+        if not user_to_delete:
+            return jsonify({"message": "User not found."}), 404
+
+        target_email = normalize_email(user_to_delete.get("email"))
+        if target_email == DEFAULT_ADMIN_EMAIL:
+            return (
+                jsonify(
+                    {"message": "The default administrator account cannot be deleted."}
+                ),
+                400,
+            )
+
+        avatar_filename = user_to_delete.get("avatar_filename")
+        if avatar_filename:
+            remove_product_image(avatar_filename)
+
+        db.users.delete_one({"_id": target_object_id})
+
+        display_name = user_to_delete.get("name") or "User"
+        return jsonify(
+            {
+                "message": f"{display_name} has been removed from the directory.",
+                "user": {"id": str(target_object_id)},
             }
         )
 

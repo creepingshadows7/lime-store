@@ -1824,6 +1824,258 @@
   color: var(--success);
 }
 
+.admin-table__profile-header {
+  text-align: right;
+}
+
+.admin-table__profile-cell {
+  text-align: right;
+  min-width: 150px;
+}
+
+.admin-table__profile-button {
+  border: 1px solid rgba(169, 255, 124, 0.35);
+  background: radial-gradient(circle at 30% 20%, rgba(64, 255, 170, 0.12), rgba(6, 12, 10, 0.8));
+  color: var(--text-primary);
+  border-radius: 999px;
+  padding: 0.45rem 1.15rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: transform 220ms ease, border-color 220ms ease,
+    box-shadow 220ms ease, background 220ms ease;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+.admin-table__profile-button:hover {
+  border-color: rgba(169, 255, 124, 0.7);
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 18px 32px rgba(0, 0, 0, 0.35);
+}
+
+.admin-table__profile-button:focus-visible {
+  outline: 2px solid rgba(169, 255, 124, 0.8);
+  outline-offset: 3px;
+}
+
+.admin-table__profile-button.is-active {
+  background: radial-gradient(circle at 20% 20%, rgba(121, 255, 210, 0.18), rgba(12, 26, 20, 0.95));
+  border-color: rgba(169, 255, 124, 0.85);
+  box-shadow: 0 20px 45px rgba(40, 160, 120, 0.25);
+}
+
+.admin-table__profile-button-icon {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.admin-table__profile-row td {
+  padding: 0 0 1.2rem;
+  border-bottom: none;
+}
+
+.profile-card {
+  background: linear-gradient(135deg, rgba(8, 16, 14, 0.95), rgba(10, 25, 20, 0.86));
+  border-radius: 22px;
+  border: 1px solid rgba(169, 255, 124, 0.2);
+  padding: clamp(1.5rem, 4vw, 2.5rem);
+  box-shadow: 0 35px 70px rgba(0, 0, 0, 0.4);
+  display: grid;
+  gap: 1.4rem;
+}
+
+.profile-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.profile-card__identity {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.profile-card__avatar {
+  width: 3.4rem;
+  height: 3.4rem;
+  border-radius: 20px;
+  border: 1px solid rgba(169, 255, 124, 0.35);
+  background: rgba(12, 30, 22, 0.9);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.profile-card__avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-card__avatar-fallback {
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--accent-lime);
+}
+
+.profile-card__name {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.profile-card__email {
+  margin: 0.15rem 0 0;
+  color: rgba(226, 248, 220, 0.75);
+  font-size: 0.95rem;
+}
+
+.profile-card__tags {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.profile-card__tag {
+  border: 1px solid rgba(169, 255, 124, 0.35);
+  border-radius: 999px;
+  padding: 0.25rem 0.85rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(226, 248, 220, 0.8);
+}
+
+.profile-card__tag--muted {
+  border-color: rgba(226, 248, 220, 0.25);
+  color: rgba(226, 248, 220, 0.65);
+}
+
+.profile-card__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+}
+
+.profile-card__fact {
+  border: 1px solid rgba(169, 255, 124, 0.18);
+  border-radius: 16px;
+  padding: 0.95rem 1rem;
+  background: rgba(5, 14, 11, 0.65);
+}
+
+.profile-card__label {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(226, 248, 220, 0.55);
+  margin: 0 0 0.35rem;
+}
+
+.profile-card__value {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-secondary);
+}
+
+.profile-card__note {
+  border: 1px dashed rgba(169, 255, 124, 0.35);
+  border-radius: 18px;
+  padding: 1rem 1.2rem;
+  background: rgba(12, 26, 20, 0.45);
+}
+
+.profile-card__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+  color: rgba(226, 248, 220, 0.8);
+}
+
+.profile-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.profile-card__action {
+  border-radius: 999px;
+  padding: 0.5rem 1.4rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  font-size: 0.85rem;
+  border: 1px solid transparent;
+  background: rgba(12, 24, 20, 0.85);
+  color: var(--text-primary);
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.profile-card__action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.profile-card__action:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.profile-card__action--ghost {
+  border-color: rgba(169, 255, 124, 0.35);
+  background: rgba(9, 18, 15, 0.75);
+}
+
+.profile-card__action--ghost:not(:disabled):hover {
+  border-color: rgba(169, 255, 124, 0.7);
+  box-shadow: 0 12px 22px rgba(0, 0, 0, 0.35);
+}
+
+.profile-card__action--danger {
+  border-color: rgba(255, 130, 130, 0.5);
+  background: radial-gradient(
+    circle at 30% 20%,
+    rgba(255, 102, 102, 0.18),
+    rgba(40, 8, 8, 0.9)
+  );
+  color: #ffdede;
+}
+
+.profile-card__action--danger:not(:disabled):hover {
+  border-color: rgba(255, 192, 192, 0.8);
+  box-shadow: 0 12px 26px rgba(255, 30, 30, 0.25);
+}
+
+.profile-card__action-feedback {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.profile-card__action-message {
+  margin: 0;
+  font-size: 0.85rem;
+  color: rgba(226, 248, 220, 0.8);
+}
+
+.profile-card__action-message--error {
+  color: var(--error);
+}
+
+.profile-card__action-message--success {
+  color: var(--success);
+}
+
+.profile-card__action-message--loading {
+  color: rgba(226, 248, 220, 0.7);
+}
+
 @media (max-width: 960px) {
   .lux-header {
     grid-template-columns: 1fr;
