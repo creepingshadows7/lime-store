@@ -335,6 +335,15 @@ def create_app() -> Flask:
             return [candidate]
         return []
 
+    def looks_like_empty_json_structure(value: str) -> bool:
+        if not isinstance(value, str):
+            return False
+        stripped = value.strip()
+        if not stripped:
+            return True
+        simplified = re.sub(r"[\[\]\{\}\s]", "", stripped)
+        return simplified == ""
+
     def normalize_variations_input(raw_value):
         if raw_value is None:
             return [], None
@@ -355,8 +364,12 @@ def create_app() -> Flask:
             if not trimmed:
                 candidates = []
             else:
-                candidates = parse_json_list(trimmed)
-                if not candidates:
+                parsed_candidates = parse_json_list(trimmed)
+                if parsed_candidates:
+                    candidates = parsed_candidates
+                elif looks_like_empty_json_structure(trimmed):
+                    candidates = []
+                else:
                     candidates = [trimmed]
         else:
             candidates = [raw_value]
