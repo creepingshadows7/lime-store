@@ -1,6 +1,27 @@
 import axios from "axios";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:5000";
+const resolveBaseUrl = () => {
+  const explicitUrl = import.meta.env.VITE_API_URL;
+  if (explicitUrl) {
+    return explicitUrl;
+  }
+
+  if (typeof window !== "undefined") {
+    const protocol = window.location.protocol || "http:";
+    const hostname = window.location.hostname || "localhost";
+    const configuredPort = import.meta.env.VITE_API_PORT || "5000";
+    const trimmedPort = String(configuredPort).trim();
+    const portSegment =
+      trimmedPort && trimmedPort !== "80" && trimmedPort !== "443"
+        ? `:${trimmedPort}`
+        : "";
+    return `${protocol}//${hostname}${portSegment}`;
+  }
+
+  return "http://localhost:5000";
+};
+
+const API_BASE_URL = resolveBaseUrl();
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
