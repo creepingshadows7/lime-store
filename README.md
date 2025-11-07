@@ -1,2 +1,2 @@
-v1.5.1 Bug fixes and stability updates
+v1.5.2 Bug fixes and stability updates
 
