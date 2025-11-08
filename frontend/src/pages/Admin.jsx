@@ -11,6 +11,21 @@ const ROLE_OPTIONS = [
   { value: "standard", label: "Standard User" },
 ];
 
+const normalizeAdminUser = (user) => {
+  if (!user) {
+    return null;
+  }
+
+  const normalizedRole =
+    typeof user.role === "string" ? user.role.toLowerCase() : "standard";
+
+  return {
+    ...user,
+    role: normalizedRole,
+    email_verified: Boolean(user.email_verified),
+  };
+};
+
 const Admin = () => {
   const { isAuthenticated, profile } = useAuth();
   const navigate = useNavigate();
@@ -63,12 +78,10 @@ const Admin = () => {
       try {
         const { data } = await apiClient.get("/api/admin/users");
         if (Array.isArray(data?.users)) {
-          setUsers(
-            data.users.map((user) => ({
-              ...user,
-              role: typeof user.role === "string" ? user.role.toLowerCase() : "standard",
-            }))
-          );
+          const normalizedList = data.users
+            .map((user) => normalizeAdminUser(user))
+            .filter(Boolean);
+          setUsers(normalizedList);
         } else {
           setUsers([]);
         }
@@ -138,10 +151,11 @@ const Admin = () => {
         `/api/admin/users/${userId}/avatar`
       );
 
-      if (data?.user) {
+      const normalizedUser = normalizeAdminUser(data?.user);
+      if (normalizedUser) {
         setUsers((prev) =>
           prev.map((user) =>
-            user.id === userId ? { ...user, ...data.user } : user
+            user.id === userId ? { ...user, ...normalizedUser } : user
           )
         );
       }
@@ -157,6 +171,51 @@ const Admin = () => {
         error.response?.data?.message ??
         "Unable to remove the profile picture right now.";
       updateProfileActionStatus(userId, "removeAvatar", "error", message);
+    }
+  };
+
+  const handleVerifyEmail = async (userId, desiredState = true) => {
+    updateProfileActionStatus(
+      userId,
+      "verifyEmail",
+      "loading",
+      desiredState
+        ? "Marking email as verified..."
+        : "Reverting verification..."
+    );
+    setFeedback("");
+
+    try {
+      const { data } = await apiClient.put(
+        `/api/admin/users/${userId}/verify`,
+        {
+          verified: desiredState,
+        }
+      );
+
+      const normalizedUser = normalizeAdminUser(data?.user);
+      if (normalizedUser) {
+        setUsers((prev) =>
+          prev.map((user) =>
+            user.id === userId ? { ...user, ...normalizedUser } : user
+          )
+        );
+      }
+
+      updateProfileActionStatus(
+        userId,
+        "verifyEmail",
+        "success",
+        data?.message ??
+          (desiredState
+            ? "Email marked as verified."
+            : "Verification removed for this email.")
+      );
+    } catch (error) {
+      const message =
+        error.response?.data?.message ??
+        "We couldn't update the verification status. Please try again.";
+      updateProfileActionStatus(userId, "verifyEmail", "error", message);
     }
   };
 
@@ -221,15 +280,14 @@ const Admin = () => {
         typeof updatedUser?.role === "string"
           ? updatedUser.role.toLowerCase()
           : nextRole;
+      const normalizedUser = normalizeAdminUser(updatedUser);
 
       setUsers((prev) =>
         prev.map((user) =>
           user.id === userId
-            ? {
-                ...user,
-                ...updatedUser,
-                role: resolvedRole,
-              }
+            ? normalizedUser
+              ? { ...user, ...normalizedUser }
+              : { ...user, role: resolvedRole }
             : user
         )
       );
@@ -320,6 +378,8 @@ const Admin = () => {
                   const joinedDate = formatDateTime(user.created_at);
                   const updatedDate = formatDateTime(user.updated_at);
                   const lastLoginDate = formatDateTime(user.last_login_at);
+                  const verifiedDate = formatDateTime(user.verified_at);
+                  const isEmailVerified = Boolean(user.email_verified);
                   const isExpanded = expandedUserId === user.id;
                   const roleLabel =
                     ROLE_OPTIONS.find(
@@ -342,16 +402,32 @@ const Admin = () => {
                     state: "idle",
                     message: "",
                   };
+                  const verifyEmailStatus = actionState.verifyEmail ?? {
+                    state: "idle",
+                    message: "",
+                  };
                   const isRemovingAvatar =
                     removeAvatarStatus.state === "loading";
                   const isDeleting = deleteStatus.state === "loading";
+                  const isVerifyingEmail =
+                    verifyEmailStatus.state === "loading";
                   const profileMessages = [
+                    verifyEmailStatus,
                     removeAvatarStatus,
                     deleteStatus,
                   ].filter((entry) => entry.message);
+                  const emailStatusLabel = isEmailVerified
+                    ? verifiedDate !== "--"
+                      ? `Verified on ${verifiedDate}`
+                      : "Email verified"
+                    : "Not verified";
                   const profileDetails = [
                     { label: "User ID", value: user.id || "--" },
                     { label: "Role", value: roleLabel },
+                    {
+                      label: "Email Status",
+                      value: emailStatusLabel,
+                    },
                     { label: "Phone", value: user.phone || "--" },
                     {
                       label: "Location",
@@ -484,6 +560,17 @@ const Admin = () => {
                                   <span className="profile-card__tag profile-card__tag--muted">
                                     Member since {joinedDate}
                                   </span>
+                                  <span
+                                    className={`profile-card__tag ${
+                                      isEmailVerified
+                                        ? "profile-card__tag--success"
+                                        : "profile-card__tag--warning"
+                                    }`}
+                                  >
+                                    {isEmailVerified
+                                      ? "Email Verified"
+                                      : "Email Pending"}
+                                  </span>
                                 </div>
                               </div>
                               <div className="profile-card__grid">
@@ -512,6 +599,27 @@ const Admin = () => {
                                 </div>
                               ) : null}
                               <div className="profile-card__actions">
+                                <button
+                                  type="button"
+                                  className={`profile-card__action ${
+                                    isEmailVerified
+                                      ? "profile-card__action--ghost"
+                                      : "profile-card__action--success"
+                                  }`}
+                                  onClick={() =>
+                                    handleVerifyEmail(
+                                      user.id,
+                                      !isEmailVerified
+                                    )
+                                  }
+                                  disabled={isVerifyingEmail}
+                                >
+                                  {isVerifyingEmail
+                                    ? "Updating..."
+                                    : isEmailVerified
+                                    ? "Mark Unverified"
+                                    : "Verify Email"}
+                                </button>
                                 <button
                                   type="button"
                                   className="profile-card__action profile-card__action--ghost"

@@ -1,2 +1,2 @@
-v1.6 Email Verification with OTP (resend code)
+v1.6.1 Manual admin email verification
 

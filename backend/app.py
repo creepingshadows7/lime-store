@@ -436,12 +436,17 @@ def create_app() -> Flask:
         if not user_document:
             return {}
 
+        verified_at = user_document.get("verified_at")
         return {
             "name": user_document.get("name", "") or "",
             "email": user_document.get("email", "") or "",
             "phone": user_document.get("phone", "") or "",
             "role": get_user_role(user_document),
             "avatar_url": build_upload_url(user_document.get("avatar_filename")),
+            "email_verified": bool(user_document.get("email_verified")),
+            "verified_at": verified_at.isoformat()
+            if isinstance(verified_at, datetime)
+            else None,
         }
 
     def serialize_admin_user(user_document) -> Dict[str, str]:
@@ -450,6 +455,7 @@ def create_app() -> Flask:
 
         created_at = user_document.get("created_at")
         last_login_at = user_document.get("last_login_at")
+        verified_at = user_document.get("verified_at")
 
         return {
             "id": str(user_document.get("_id")),
@@ -462,6 +468,10 @@ def create_app() -> Flask:
             if isinstance(last_login_at, datetime)
             else None,
             "avatar_url": build_upload_url(user_document.get("avatar_filename")),
+            "email_verified": bool(user_document.get("email_verified")),
+            "verified_at": verified_at.isoformat()
+            if isinstance(verified_at, datetime)
+            else None,
         }
 
     def normalize_category_name(value: Optional[str]) -> str:
@@ -1806,6 +1816,54 @@ def create_app() -> Flask:
         return jsonify(
             {
                 "message": f"Role updated to {desired_role}.",
+                "user": serialize_admin_user(updated_user),
+            }
+        )
+
+    @app.route("/api/admin/users/<user_id>/verify", methods=["PUT"])
+    @jwt_required()
+    def admin_update_user_verification(user_id: str):
+        _, admin_error = require_admin_user()
+        if admin_error:
+            return admin_error
+
+        try:
+            target_object_id = ObjectId(user_id)
+        except (InvalidId, TypeError):
+            return jsonify({"message": "Invalid user identifier."}), 400
+
+        payload = request.get_json(silent=True) or {}
+        desired_state = payload.get("verified")
+        if desired_state is None:
+            desired_state = True
+        desired_state = bool(desired_state)
+
+        user_document = db.users.find_one({"_id": target_object_id})
+        if not user_document:
+            return jsonify({"message": "User not found."}), 404
+
+        update_fields = {
+            "email_verified": desired_state,
+            "verified_at": datetime.utcnow() if desired_state else None,
+        }
+
+        db.users.update_one({"_id": target_object_id}, {"$set": update_fields})
+
+        if desired_state:
+            email_verification_collection.delete_one(
+                {"email": normalize_email(user_document.get("email"))}
+            )
+
+        updated_user = db.users.find_one({"_id": target_object_id})
+        message = (
+            "Email marked as verified."
+            if desired_state
+            else "User email marked as unverified."
+        )
+
+        return jsonify(
+            {
+                "message": message,
                 "user": serialize_admin_user(updated_user),
             }
         )
