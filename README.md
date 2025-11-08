@@ -1,2 +1,2 @@
-v1.5.2 Mobile UI fixes
+v1.6 Email Verification with OTP (resend code)
 

@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import secrets
 import unicodedata
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
@@ -8,6 +9,7 @@ from uuid import uuid4
 from urllib.parse import urljoin, urlparse
 
 import bcrypt
+import resend
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
@@ -23,6 +25,10 @@ from bson.errors import InvalidId
 from werkzeug.utils import secure_filename
 
 load_dotenv()
+
+_resend_api_key = (os.getenv("RESEND_API_KEY") or "").strip()
+if _resend_api_key:
+    resend.api_key = _resend_api_key
 
 _configured_admin_email = os.getenv(
     "DEFAULT_ADMIN_EMAIL", "mihailtsvetanov7@gmail.com"
@@ -65,6 +71,38 @@ def create_app() -> Flask:
     mongo = PyMongo(app)
     db = mongo.db
 
+    email_regex = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    brand_colors = {
+        "bg_primary": "#030711",
+        "bg_secondary": "#040b18",
+        "glass_light": "rgba(18, 33, 25, 0.55)",
+        "glass_border": "rgba(175, 255, 179, 0.25)",
+        "glass_highlight": "rgba(160, 255, 180, 0.45)",
+        "text_primary": "#f5ffe9",
+        "text_secondary": "rgba(226, 248, 220, 0.82)",
+        "text_muted": "rgba(226, 248, 220, 0.55)",
+        "accent_lime": "#a9ff7c",
+        "accent_mint": "#73ffc6",
+    }
+    otp_code_length = 6
+    otp_expiration_minutes = 5
+    otp_sender_email = (
+        os.getenv("OTP_SENDER_EMAIL", "verification@limeshop.store")
+        or "verification@limeshop.store"
+    )
+    otp_email_subject = "Lime Shop • Verify your email"
+    max_failed_otp_attempts = 5
+    email_verification_collection = db.email_verification_tokens
+
+    try:
+        email_verification_collection.create_index(
+            "expires_at", expireAfterSeconds=0
+        )
+    except Exception as exc:
+        app.logger.warning(
+            "Unable to ensure TTL index for verification codes: %s", exc
+        )
+
     seed_products = [
         {
             "name": "Luminous Lime Elixir",
@@ -100,6 +138,10 @@ def create_app() -> Flask:
 
     def normalize_email(value: Optional[str]) -> str:
         return str(value or "").strip().lower()
+
+    def is_valid_email(value: Optional[str]) -> bool:
+        normalized = normalize_email(value)
+        return bool(normalized and email_regex.match(normalized))
 
     def normalize_role(value: Optional[str]) -> str:
         normalized = str(value or "").strip().lower()
@@ -137,6 +179,140 @@ def create_app() -> Flask:
 
     def require_admin_user():
         return require_role("admin")
+
+    def generate_otp_code(length: int = otp_code_length) -> str:
+        upper_bound = 10**length
+        return f"{secrets.randbelow(upper_bound):0{length}d}"
+
+    def persist_verification_code(email: str, otp: str) -> datetime:
+        expires_at = datetime.utcnow() + timedelta(minutes=otp_expiration_minutes)
+        hashed_code = bcrypt.hashpw(otp.encode("utf-8"), bcrypt.gensalt())
+
+        email_verification_collection.update_one(
+            {"email": email},
+            {
+                "$set": {
+                    "email": email,
+                    "otp_hash": hashed_code,
+                    "expires_at": expires_at,
+                    "created_at": datetime.utcnow(),
+                    "failed_attempts": 0,
+                }
+            },
+            upsert=True,
+        )
+
+        return expires_at
+
+    def log_otp_failure(email: str, details: str):
+        log_message = f"OTP dispatch failed for {email}: {details}"
+        app.logger.error(log_message)
+        print(f"[OTP][ERROR] {log_message}", flush=True)
+
+    def build_verification_email_html(otp: str) -> str:
+        colors = brand_colors
+        gradient_overlay = (
+            "radial-gradient(circle at 25% -20%, rgba(169,255,124,0.22), transparent 55%),"
+            "radial-gradient(circle at 90% 0%, rgba(115,255,198,0.25), transparent 62%),"
+            "linear-gradient(145deg, rgba(3,7,17,0.96), rgba(4,11,24,0.92))"
+        )
+        otp_pill_gradient = (
+            f"linear-gradient(120deg, {colors['accent_lime']}, {colors['accent_mint']})"
+        )
+
+        return f"""<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
+    <title>Lime Shop Email Verification</title>
+  </head>
+  <body style="margin:0;padding:0;background-color:{colors['bg_primary']};color:{colors['text_primary']};font-family:'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif;">
+    <div style="padding:48px 16px;background-color:{colors['bg_primary']};background-image:radial-gradient(circle at 18% 10%, rgba(169,255,124,0.12), transparent 60%),radial-gradient(circle at 80% 0%, rgba(115,255,198,0.12), transparent 55%);">
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:560px;margin:0 auto;border-radius:32px;overflow:hidden;background:{colors['bg_secondary']};border:1px solid {colors['glass_border']};box-shadow:0 32px 80px rgba(2, 6, 14, 0.78);">
+        <tr>
+          <td style="padding:48px 42px;background-image:{gradient_overlay};background-size:cover;">
+            <p style="margin:0 0 12px 0;text-transform:uppercase;letter-spacing:0.4em;font-size:12px;color:{colors['accent_mint']};">Lime Shop</p>
+            <h1 style="margin:0 0 14px 0;font-size:26px;line-height:1.25;color:{colors['text_primary']};">Ignite your Lime Shop account</h1>
+            <p style="margin:0 0 28px 0;font-size:15px;line-height:1.75;color:{colors['text_secondary']};">
+              We pair handcrafted citrus goods with neon energy. Enter the code below to prove this inbox belongs to you
+              and finish creating your account. The code is valid for {otp_expiration_minutes} minutes.
+            </p>
+            <div style="background:{colors['glass_light']};border:1px solid {colors['glass_border']};border-radius:26px;padding:28px;text-align:center;box-shadow:0 25px 65px rgba(3,7,17,0.65);">
+              <p style="margin:0 0 16px 0;text-transform:uppercase;letter-spacing:0.3em;font-size:12px;color:{colors['text_muted']};">Verification code</p>
+              <span style="display:inline-block;padding:18px 32px;border-radius:18px;font-size:36px;letter-spacing:0.4em;font-weight:700;background:{otp_pill_gradient};color:{colors['bg_secondary']};text-shadow:0 8px 18px rgba(3,7,17,0.4);">
+                {otp}
+              </span>
+              <p style="margin:18px 0 0 0;font-size:13px;color:{colors['text_secondary']};">Expires {otp_expiration_minutes} minutes after this email was sent</p>
+            </div>
+            <div style="margin-top:32px;padding:0;">
+              <p style="margin:0 0 12px 0;font-size:14px;color:{colors['text_secondary']};">Need a refresher?</p>
+              <ol style="margin:0;padding-left:18px;color:{colors['text_secondary']};line-height:1.8;font-size:14px;">
+                <li>Return to the Lime Shop tab where you requested the code.</li>
+                <li>Enter the digits exactly as shown above.</li>
+                <li>Continue building your personalized Lime Shop experience.</li>
+              </ol>
+            </div>
+            <p style="margin:32px 0 8px 0;font-size:14px;line-height:1.7;color:{colors['text_muted']};">
+              Didn&rsquo;t expect this email? You can safely ignore it—your account stays locked until the correct code is entered.
+            </p>
+            <p style="margin:0;font-size:13px;color:{colors['text_muted']};">
+              With zest,<br />The Lime Shop Team
+            </p>
+          </td>
+        </tr>
+      </table>
+    </div>
+  </body>
+</html>"""
+
+    def send_verification_email(recipient_email: str, otp: str):
+        configured_api_key = getattr(resend, "api_key", None) or _resend_api_key
+        if not configured_api_key:
+            return False, "RESEND_API_KEY is not configured."
+
+        html_body = build_verification_email_html(otp)
+        text_body = (
+            f"Your Lime Shop verification code is {otp}. "
+            f"Enter it within {otp_expiration_minutes} minutes to confirm this email."
+        )
+
+        payload: Dict[str, object] = {
+            "from": f"Lime Shop <{otp_sender_email}>",
+            "to": [recipient_email],
+            "subject": otp_email_subject,
+            "html": html_body,
+            "text": text_body,
+        }
+
+        try:
+            response = resend.Emails.send(payload)
+        except Exception as exc:
+            return False, str(exc)
+
+        if not isinstance(response, dict) or not response.get("id"):
+            return False, str(response)
+
+        return True, None
+
+    def dispatch_verification_code(email: str):
+        otp = generate_otp_code()
+        expires_at = persist_verification_code(email, otp)
+
+        sent, error_details = send_verification_email(email, otp)
+        if not sent:
+            email_verification_collection.delete_one({"email": email})
+            log_otp_failure(email, error_details or "Unknown Resend error")
+            return {
+                "success": False,
+                "error": error_details or "Failed to deliver verification email.",
+            }
+
+        return {
+            "success": True,
+            "expires_at": expires_at,
+            "otp_length": otp_code_length,
+        }
 
     def ensure_seed_products():
         if db.products.count_documents({}) > 0:
@@ -692,6 +868,131 @@ def create_app() -> Flask:
     def serve_uploaded_file(filename: str):
         return send_from_directory(app.config["PRODUCT_UPLOAD_FOLDER"], filename)
 
+    @app.route("/send-otp", methods=["POST"])
+    @app.route("/api/send-otp", methods=["POST"])
+    def issue_email_verification_code():
+        payload = request.get_json(silent=True) or {}
+        email = normalize_email(payload.get("email"))
+
+        if not is_valid_email(email):
+            return jsonify({"message": "Please provide a valid email address."}), 400
+
+        result = dispatch_verification_code(email)
+        if not result.get("success"):
+            return (
+                jsonify(
+                    {
+                        "message": "We could not send the verification email. Please try again in a moment.",
+                        "error": result.get("error"),
+                    }
+                ),
+                502,
+            )
+
+        expires_at = result.get("expires_at")
+        return (
+            jsonify(
+                {
+                    "message": "Verification code sent.",
+                    "email": email,
+                    "expires_in_seconds": otp_expiration_minutes * 60,
+                    "otp_length": result.get("otp_length", otp_code_length),
+                    **(
+                        {"expires_at": f"{expires_at.isoformat()}Z"}
+                        if expires_at
+                        else {}
+                    ),
+                }
+            ),
+            200,
+        )
+
+    @app.route("/verify-otp", methods=["POST"])
+    @app.route("/api/verify-otp", methods=["POST"])
+    def verify_email_otp():
+        payload = request.get_json(silent=True) or {}
+        email = normalize_email(payload.get("email"))
+        otp = str(payload.get("otp", "")).strip()
+
+        if not is_valid_email(email):
+            return jsonify({"message": "Please provide a valid email address."}), 400
+
+        if not (otp.isdigit() and len(otp) == otp_code_length):
+            return (
+                jsonify(
+                    {
+                        "message": f"The verification code must be {otp_code_length} digits."
+                    }
+                ),
+                400,
+            )
+
+        code_record = email_verification_collection.find_one({"email": email})
+        if not code_record:
+            return (
+                jsonify(
+                    {
+                        "message": "No verification request found for this email. Please request a new code."
+                    }
+                ),
+                400,
+            )
+
+        expires_at = code_record.get("expires_at")
+        if not expires_at or expires_at < datetime.utcnow():
+            email_verification_collection.delete_one({"_id": code_record["_id"]})
+            return (
+                jsonify(
+                    {
+                        "message": "The verification code has expired. Please request a new one."
+                    }
+                ),
+                400,
+            )
+
+        stored_hash = code_record.get("otp_hash")
+        if not stored_hash or not bcrypt.checkpw(otp.encode("utf-8"), stored_hash):
+            failed_attempts = int(code_record.get("failed_attempts", 0) or 0) + 1
+            if failed_attempts >= max_failed_otp_attempts:
+                email_verification_collection.delete_one({"_id": code_record["_id"]})
+                return (
+                    jsonify(
+                        {
+                            "message": "Too many incorrect attempts. Please request a new verification code."
+                        }
+                    ),
+                    400,
+                )
+
+            email_verification_collection.update_one(
+                {"_id": code_record["_id"]},
+                {"$set": {"failed_attempts": failed_attempts}},
+            )
+            return jsonify({"message": "The verification code is incorrect."}), 400
+
+        email_verification_collection.delete_one({"_id": code_record["_id"]})
+
+        verified_at = datetime.utcnow()
+        update_result = db.users.update_one(
+            {"email": email},
+            {"$set": {"email_verified": True, "verified_at": verified_at}},
+        )
+        if update_result.matched_count == 0:
+            app.logger.warning(
+                "OTP verified for %s but no matching user record was updated.", email
+            )
+
+        return (
+            jsonify(
+                {
+                    "message": "Email verified successfully.",
+                    "verified": True,
+                    "verified_at": f"{verified_at.isoformat()}Z",
+                }
+            ),
+            200,
+        )
+
     # Register
     @app.route("/api/register", methods=["POST"])
     def register():
@@ -723,14 +1024,44 @@ def create_app() -> Flask:
             "password": hashed_pw,
             "created_at": datetime.utcnow(),
             "role": assigned_role,
+            "email_verified": False,
         }
 
         if phone:
             user_document["phone"] = phone
 
-        db.users.insert_one(user_document)
+        insert_result = db.users.insert_one(user_document)
 
-        return jsonify({"message": "User registered successfully."}), 201
+        otp_result = dispatch_verification_code(email)
+        if not otp_result.get("success"):
+            db.users.delete_one({"_id": insert_result.inserted_id})
+            return (
+                jsonify(
+                    {
+                        "message": "Account creation failed while sending the verification code. Please try again.",
+                        "error": otp_result.get("error"),
+                    }
+                ),
+                502,
+            )
+
+        return (
+            jsonify(
+                {
+                    "message": "Account created. Enter the verification code we emailed to continue.",
+                    "email": email,
+                    "requires_verification": True,
+                    "otp_length": otp_result.get("otp_length", otp_code_length),
+                    "expires_in_seconds": otp_expiration_minutes * 60,
+                    **(
+                        {"expires_at": f"{otp_result['expires_at'].isoformat()}Z"}
+                        if otp_result.get("expires_at")
+                        else {}
+                    ),
+                }
+            ),
+            201,
+        )
 
     # Login
     @app.route("/api/login", methods=["POST"])
@@ -759,7 +1090,16 @@ def create_app() -> Flask:
                     }
                 },
             )
-            user = db.users.find_one({"_id": user["_id"]})
+        if user.get("email_verified") is False:
+            return (
+                jsonify(
+                    {
+                        "message": "Please verify your email before logging in.",
+                        "requires_verification": True,
+                    }
+                ),
+                403,
+            )
 
         db.users.update_one(
             {"_id": user["_id"]},
