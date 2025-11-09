@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { useCart } from "../context/CartContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
 import { formatEuro } from "../utils/currency";
 import { formatPublishedDate } from "../utils/dates";
@@ -30,6 +31,7 @@ const normalizeCategoriesList = (categoryList = []) => {
 const ProductDetail = () => {
   const { productId } = useParams();
   const { isAuthenticated, profile } = useAuth();
+  const { addItem } = useCart();
   const [status, setStatus] = useState("loading");
   const [product, setProduct] = useState(null);
   const [error, setError] = useState("");
@@ -204,6 +206,21 @@ const ProductDetail = () => {
         .filter((name) => Boolean(name))
     : [];
 
+  const handleAddToCart = () => {
+    if (!product) {
+      return;
+    }
+    addItem(
+      {
+        id: product.id,
+        name: product.name,
+        price: product.price,
+        imageUrl: primaryImageUrl,
+      },
+      1
+    );
+  };
+
   const handleOpenEditor = () => {
     if (canManageProduct) {
       setIsEditModalOpen(true);
@@ -321,7 +338,11 @@ const ProductDetail = () => {
             </div>
           </dl>
           <div className="product-detail__actions">
-            <button type="button" className="button button--gradient">
+            <button
+              type="button"
+              className="button button--gradient"
+              onClick={handleAddToCart}
+            >
               Add to Cart
             </button>
             {canManageProduct && (

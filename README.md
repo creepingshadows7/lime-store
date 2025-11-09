@@ -1,2 +1,1 @@
-v1.6.2 Bug Fixes for email verification
-
+v1.7 Cart Interface is working

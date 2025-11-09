@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { useCart } from "../context/CartContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
 import { formatEuro } from "../utils/currency";
 import { formatPublishedDate } from "../utils/dates";
@@ -87,6 +88,7 @@ const formatVariationPayload = (entries) => {
 
 const Products = () => {
   const { isAuthenticated, profile, logout } = useAuth();
+  const { addItem } = useCart();
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
   const [status, setStatus] = useState("loading");
@@ -645,10 +647,25 @@ const Products = () => {
     }
   };
 
-  const handleAddToCart = (event) => {
+  const handleAddToCart = (event, product, imageUrl) => {
     event.preventDefault();
     event.stopPropagation();
-    // Cart logic to be implemented.
+    if (!product) {
+      return;
+    }
+    addItem(
+      {
+        id: product.id,
+        name: product.name,
+        price: product.price,
+        imageUrl,
+      },
+      1
+    );
+    setManagementFeedback({
+      state: "success",
+      message: `${product.name} added to your cart.`,
+    });
   };
 
   const handleProductUpdated = (updatedProduct) => {
@@ -1169,7 +1186,9 @@ const Products = () => {
                       <button
                         type="button"
                         className="button button--outline product-card__button"
-                        onClick={handleAddToCart}
+                        onClick={(event) =>
+                          handleAddToCart(event, product, primaryImageUrl)
+                        }
                       >
                         Add to Cart
                       </button>
