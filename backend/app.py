@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 import secrets
@@ -845,6 +846,220 @@ def create_app() -> Flask:
             "variations": variations_list,
         }
 
+    def safe_float(value, default=0.0):
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return default
+        if math.isfinite(numeric):
+            return numeric
+        return default
+
+    def safe_positive_int(value, default=0):
+        try:
+            numeric = int(float(value))
+        except (TypeError, ValueError):
+            return default
+        return max(default, numeric)
+
+    def normalize_order_item(payload):
+        if not isinstance(payload, dict):
+            return None
+
+        product_identifier = (
+            payload.get("product_id")
+            or payload.get("productId")
+            or payload.get("id")
+            or payload.get("product")
+        )
+        if isinstance(product_identifier, ObjectId):
+            product_identifier = str(product_identifier)
+        elif product_identifier is not None:
+            product_identifier = str(product_identifier)
+        product_id = (product_identifier or "").strip()
+        if not product_id:
+            return None
+
+        quantity = safe_positive_int(payload.get("quantity"), 1) or 1
+        name = str(payload.get("name") or "").strip()
+        price_value = safe_float(payload.get("price"), 0.0)
+        image_url = str(
+            payload.get("imageUrl") or payload.get("image_url") or ""
+        ).strip()
+
+        return {
+            "product_id": product_id,
+            "quantity": quantity,
+            "name": name,
+            "price": round(price_value, 2),
+            "image_url": image_url,
+        }
+
+    def calculate_order_totals(items: List[Dict]) -> Dict[str, float]:
+        subtotal = 0.0
+        total_items = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            quantity = safe_positive_int(item.get("quantity"), 0)
+            price_value = safe_float(item.get("price"), 0.0)
+            subtotal += price_value * quantity
+            total_items += quantity
+        return {
+            "subtotal": round(subtotal, 2),
+            "total_items": total_items,
+        }
+
+    def serialize_order(order_document):
+        if not order_document:
+            return None
+
+        order_id = order_document.get("_id")
+        created_at = order_document.get("created_at")
+        if not isinstance(created_at, datetime) and isinstance(order_id, ObjectId):
+            try:
+                created_at = order_id.generation_time
+            except Exception:
+                created_at = None
+
+        if isinstance(created_at, datetime):
+            created_at_iso = (
+                created_at.isoformat()
+                if created_at.tzinfo is not None
+                else f"{created_at.isoformat()}Z"
+            )
+        else:
+            created_at_iso = None
+
+        product_summary_cache: Dict[str, Optional[Dict[str, str]]] = {}
+
+        def fetch_product_summary(product_id: str):
+            if not product_id:
+                return None
+            cached = product_summary_cache.get(product_id)
+            if cached is not None:
+                return cached
+            try:
+                object_id = ObjectId(product_id)
+            except (InvalidId, TypeError):
+                product_summary_cache[product_id] = None
+                return None
+
+            product_document = db.products.find_one({"_id": object_id})
+            if not product_document:
+                product_summary_cache[product_id] = None
+                return None
+
+            summary = {
+                "name": product_document.get("name", ""),
+                "price": safe_float(product_document.get("price"), 0.0),
+                "image_url": "",
+            }
+
+            image_urls = product_document.get("image_urls")
+            if isinstance(image_urls, list) and image_urls:
+                summary["image_url"] = str(image_urls[0])
+            else:
+                filenames = product_document.get("image_filenames")
+                primary_filename = ""
+                if isinstance(filenames, list) and filenames:
+                    primary_filename = filenames[0]
+                elif product_document.get("image_filename"):
+                    primary_filename = product_document.get("image_filename")
+                if primary_filename:
+                    summary["image_url"] = urljoin(
+                        request.host_url, f"uploads/{primary_filename}"
+                    )
+                elif product_document.get("image_url"):
+                    summary["image_url"] = str(product_document.get("image_url"))
+
+            product_summary_cache[product_id] = summary
+            return summary
+
+        raw_items = order_document.get("items") or []
+        serialized_items = []
+        for index, entry in enumerate(raw_items):
+            if isinstance(entry, str):
+                cleaned = entry.strip()
+                serialized_items.append(
+                    {
+                        "productId": "",
+                        "name": cleaned or "Curated Selection",
+                        "quantity": 1,
+                        "price": 0,
+                        "imageUrl": "",
+                        "lineTotal": 0,
+                    }
+                )
+                continue
+
+            if not isinstance(entry, dict):
+                continue
+
+            product_identifier = (
+                entry.get("product_id")
+                or entry.get("productId")
+                or entry.get("id")
+                or entry.get("product")
+                or ""
+            )
+            if isinstance(product_identifier, ObjectId):
+                product_identifier = str(product_identifier)
+            product_id = str(product_identifier).strip()
+
+            quantity = safe_positive_int(entry.get("quantity"), 1) or 1
+            price_value = entry.get("price")
+            name = (entry.get("name") or "").strip()
+            image_url = str(
+                entry.get("image_url") or entry.get("imageUrl") or ""
+            ).strip()
+
+            product_summary = fetch_product_summary(product_id) if product_id else None
+
+            if not name and product_summary and product_summary.get("name"):
+                name = product_summary["name"]
+            if price_value is None and product_summary is not None:
+                price_value = product_summary.get("price")
+            price_value = safe_float(price_value, 0.0)
+
+            if not image_url and product_summary:
+                image_url = product_summary.get("image_url") or ""
+
+            line_total = round(price_value * quantity, 2)
+            serialized_items.append(
+                {
+                    "productId": product_id or f"legacy-{index}",
+                    "name": name or "Curated Selection",
+                    "quantity": quantity,
+                    "price": round(price_value, 2),
+                    "imageUrl": image_url,
+                    "lineTotal": line_total,
+                }
+            )
+
+        if not serialized_items:
+            return None
+
+        subtotal = order_document.get("subtotal")
+        total_items = order_document.get("total_items")
+
+        if subtotal is None:
+            subtotal = sum(item["lineTotal"] for item in serialized_items)
+        if total_items is None:
+            total_items = sum(item["quantity"] for item in serialized_items)
+
+        order_number = str(order_document.get("order_number", "")).strip()
+        if not order_number and isinstance(order_id, ObjectId):
+            order_number = str(order_id)[-8:].upper()
+
+        return {
+            "id": str(order_id) if order_id else "",
+            "orderNumber": order_number,
+            "createdAt": created_at_iso,
+            "items": serialized_items,
+            "subtotal": round(safe_float(subtotal, 0.0), 2),
+            "totalItems": safe_positive_int(total_items, 0),
+        }
     def fetch_product(product_id: str):
         try:
             object_id = ObjectId(product_id)
@@ -1752,14 +1967,51 @@ def create_app() -> Flask:
         if not isinstance(items, list) or not items:
             return jsonify({"message": "Add at least one item to checkout."}), 400
 
-        db.orders.insert_one({"user": current_user, "items": items})
+        normalized_items = []
+        for entry in items:
+            normalized_entry = normalize_order_item(entry)
+            if normalized_entry:
+                normalized_items.append(normalized_entry)
+
+        if not normalized_items:
+            return jsonify({"message": "Add at least one item to checkout."}), 400
+
+        totals = calculate_order_totals(normalized_items)
+        order_number = f"LIME-{uuid4().hex[:8].upper()}"
+        order_document = {
+            "user": current_user,
+            "items": normalized_items,
+            "created_at": datetime.utcnow(),
+            "order_number": order_number,
+            "subtotal": totals["subtotal"],
+            "total_items": totals["total_items"],
+        }
+
+        insert_result = db.orders.insert_one(order_document)
+        order_document["_id"] = insert_result.inserted_id
 
         return jsonify(
             {
                 "message": f"Checkout successful for {current_user}.",
-                "items": items,
+                "order": serialize_order(order_document),
             }
         )
+
+    @app.route("/api/orders", methods=["GET"])
+    @jwt_required()
+    def list_orders():
+        current_user = get_jwt_identity()
+        cursor = (
+            db.orders.find({"user": current_user})
+            .sort([("created_at", -1), ("_id", -1)])
+            .limit(25)
+        )
+        orders = []
+        for document in cursor:
+            serialized = serialize_order(document)
+            if serialized:
+                orders.append(serialized)
+        return jsonify({"orders": orders})
 
     # --- Admin Routes ---
 

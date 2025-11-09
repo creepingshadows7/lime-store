@@ -73,6 +73,9 @@ const Cart = () => {
       const payloadItems = items.map((item) => ({
         productId: item.id,
         quantity: item.quantity,
+        name: item.name,
+        price: item.price,
+        imageUrl: item.imageUrl,
       }));
       const { data } = await apiClient.post("/api/checkout", {
         items: payloadItems,
@@ -150,7 +153,7 @@ const Cart = () => {
                         }
                         aria-label={`Decrease quantity for ${item.name}`}
                       >
-                        −
+                        -
                       </button>
                       <input
                         type="number"
