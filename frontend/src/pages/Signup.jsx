@@ -10,6 +10,14 @@ const Signup = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [phone, setPhone] = useState("");
+  const [addressValues, setAddressValues] = useState({
+    country: "",
+    postcode: "",
+    city: "",
+    line1: "",
+    line2: "",
+  });
+  const [collectAddress, setCollectAddress] = useState(true);
   const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState("");
   const [phase, setPhase] = useState("form");
@@ -29,13 +37,21 @@ const Signup = () => {
       const normalizedEmail = email.trim().toLowerCase();
       const safeName = name.trim();
       const safePhone = phone.trim();
+      const trimmedAddress = Object.fromEntries(
+        Object.entries(addressValues).map(([key, value]) => [key, value.trim()])
+      );
+      const hasAddressInput =
+        collectAddress && Object.values(trimmedAddress).some(Boolean);
 
-      const { data } = await apiClient.post("/api/register", {
+      const payload = {
         name: safeName,
         email: normalizedEmail,
         password,
         ...(safePhone ? { phone: safePhone } : {}),
-      });
+        ...(hasAddressInput ? { address: trimmedAddress } : {}),
+      };
+
+      const { data } = await apiClient.post("/api/register", payload);
 
       setPendingEmail(normalizedEmail);
       setPhase("verify");
@@ -63,6 +79,22 @@ const Signup = () => {
         );
       }
     }
+  };
+
+  const handleAddressChange = (event) => {
+    const { name: fieldName, value } = event.target;
+    setAddressValues((prev) => ({
+      ...prev,
+      [fieldName]: value,
+    }));
+  };
+
+  const handleSkipAddress = () => {
+    setCollectAddress(false);
+  };
+
+  const handleEnableAddress = () => {
+    setCollectAddress(true);
   };
 
   const handleVerifySubmit = async (event) => {
@@ -159,6 +191,113 @@ const Signup = () => {
           placeholder="+1 555 123 4567"
         />
       </label>
+      <div className="auth-address">
+        <div className="auth-address__header">
+          <div>
+            <p className="eyebrow eyebrow--muted">Delivery address</p>
+            <h3>Tell us where to deliver</h3>
+            <p className="auth-address__subtitle">
+              Add your preferred address now or save it later from your profile.
+            </p>
+          </div>
+          {collectAddress ? (
+            <button
+              type="button"
+              className="auth-address__toggle"
+              onClick={handleSkipAddress}
+            >
+              Skip for now
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="auth-address__toggle auth-address__toggle--primary"
+              onClick={handleEnableAddress}
+            >
+              Add address
+            </button>
+          )}
+        </div>
+        {collectAddress ? (
+          <>
+            <div className="auth-address__grid">
+              <label className="input-group">
+                <span>Country</span>
+                <input
+                  id="signup-country"
+                  name="country"
+                  value={addressValues.country}
+                  autoComplete="country-name"
+                  onChange={handleAddressChange}
+                  placeholder="Netherlands"
+                />
+              </label>
+              <label className="input-group">
+                <span>Postcode</span>
+                <input
+                  id="signup-postcode"
+                  name="postcode"
+                  value={addressValues.postcode}
+                  autoComplete="postal-code"
+                  onChange={handleAddressChange}
+                  placeholder="1234 AB"
+                />
+              </label>
+              <label className="input-group">
+                <span>City</span>
+                <input
+                  id="signup-city"
+                  name="city"
+                  value={addressValues.city}
+                  autoComplete="address-level2"
+                  onChange={handleAddressChange}
+                  placeholder="Eindhoven"
+                />
+              </label>
+              <label className="input-group input-group--span">
+                <span>Address Line 1</span>
+                <input
+                  id="signup-line1"
+                  name="line1"
+                  value={addressValues.line1}
+                  autoComplete="address-line1"
+                  onChange={handleAddressChange}
+                  placeholder="Lime Lane 42"
+                />
+              </label>
+              <label className="input-group input-group--span">
+                <span>Address Line 2 (optional)</span>
+                <input
+                  id="signup-line2"
+                  name="line2"
+                  value={addressValues.line2}
+                  autoComplete="address-line2"
+                  onChange={handleAddressChange}
+                  placeholder="Apartment, suite, etc."
+                />
+              </label>
+            </div>
+            <p className="auth-address__note">
+              We will reuse this address during checkout so you can breeze through
+              delivery details.
+            </p>
+          </>
+        ) : (
+          <div className="auth-address__placeholder">
+            <p>
+              Prefer to add it later? No problem—you can save it from your
+              profile page.
+            </p>
+            <button
+              type="button"
+              className="button button--ghost"
+              onClick={handleEnableAddress}
+            >
+              Add delivery address now
+            </button>
+          </div>
+        )}
+      </div>
       <label className="input-group">
         <span>Password</span>
         <input

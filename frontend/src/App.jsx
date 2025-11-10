@@ -8,6 +8,7 @@ import ProductDetail from "./pages/ProductDetail";
 import ProductEdit from "./pages/ProductEdit";
 import Signup from "./pages/Signup";
 import Admin from "./pages/Admin";
+import Checkout from "./pages/Checkout";
 import "./App.css";
 import { useAuth } from "./context/AuthContext";
 import { DEFAULT_ADMIN_EMAIL } from "./constants";
@@ -121,6 +122,7 @@ const App = () => {
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/cart" element={<Cart />} />
+          <Route path="/checkout" element={<Checkout />} />
           <Route path="/account" element={<Account />} />
           <Route path="/admin" element={<Admin />} />
         </Routes>

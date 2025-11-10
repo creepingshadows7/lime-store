@@ -19,6 +19,7 @@ from flask_jwt_extended import (
     create_access_token,
     get_jwt_identity,
     jwt_required,
+    verify_jwt_in_request,
 )
 from flask_pymongo import PyMongo
 from bson import ObjectId
@@ -436,6 +437,77 @@ def create_app() -> Flask:
 
         return urljoin(request.host_url, f"uploads/{sanitized}")
 
+    ADDRESS_FIELDS = ("country", "postcode", "city", "line1", "line2")
+    ADDRESS_FIELD_ALIASES = {
+        "country": (
+            "country",
+            "country_name",
+            "countryName",
+            "address_country",
+            "addressCountry",
+        ),
+        "postcode": (
+            "postcode",
+            "postal_code",
+            "postalCode",
+            "zip",
+            "zip_code",
+            "zipCode",
+            "address_postcode",
+            "addressPostcode",
+        ),
+        "city": ("city", "town", "address_city", "addressCity"),
+        "line1": (
+            "line1",
+            "line_1",
+            "address_line_1",
+            "addressLine1",
+            "address1",
+            "street",
+            "street1",
+        ),
+        "line2": (
+            "line2",
+            "line_2",
+            "address_line_2",
+            "addressLine2",
+            "address2",
+            "apartment",
+            "suite",
+        ),
+    }
+    ADDRESS_REQUIRED_FIELDS = ("country", "postcode", "city", "line1")
+
+    def normalize_address_payload(payload: Optional[Dict]) -> Dict[str, str]:
+        if not isinstance(payload, dict):
+            return {}
+
+        normalized: Dict[str, str] = {}
+        for field in ADDRESS_FIELDS:
+            aliases = ADDRESS_FIELD_ALIASES.get(field, (field,))
+            value = None
+            for alias in aliases:
+                if alias in payload:
+                    value = payload.get(alias)
+                    break
+            if value is None:
+                continue
+            trimmed = str(value).strip()
+            if trimmed:
+                normalized[field] = trimmed
+        return normalized
+
+    def has_any_address_value(payload: Optional[Dict]) -> bool:
+        return bool(normalize_address_payload(payload))
+
+    def is_complete_address(payload: Optional[Dict]) -> bool:
+        normalized = normalize_address_payload(payload)
+        return all(normalized.get(field) for field in ADDRESS_REQUIRED_FIELDS)
+
+    def serialize_address_payload(payload: Optional[Dict]) -> Dict[str, str]:
+        normalized = normalize_address_payload(payload)
+        return {field: normalized.get(field, "") for field in ADDRESS_FIELDS}
+
     def serialize_user_profile(user_document) -> Dict[str, str]:
         if not user_document:
             return {}
@@ -451,6 +523,7 @@ def create_app() -> Flask:
             "verified_at": verified_at.isoformat()
             if isinstance(verified_at, datetime)
             else None,
+            "address": serialize_address_payload(user_document.get("address")),
         }
 
     def serialize_admin_user(user_document) -> Dict[str, str]:
@@ -1065,6 +1138,20 @@ def create_app() -> Flask:
             created_at_iso = None
 
         product_summary_cache: Dict[str, Optional[Dict[str, str]]] = {}
+        customer_document = order_document.get("customer") or {}
+        fallback_email = normalize_email(order_document.get("user"))
+        customer_type = str(customer_document.get("type") or "").strip().lower()
+        serialized_customer = {
+            "name": str(customer_document.get("name") or "").strip(),
+            "email": normalize_email(
+                customer_document.get("email") or fallback_email
+            ),
+            "phone": str(customer_document.get("phone") or "").strip(),
+            "type": customer_type or ("account" if fallback_email else "guest"),
+        }
+        shipping_address = serialize_address_payload(
+            order_document.get("shipping_address")
+        )
 
         def fetch_product_summary(product_id: str):
             if not product_id:
@@ -1244,6 +1331,8 @@ def create_app() -> Flask:
             "items": serialized_items,
             "subtotal": round(safe_float(subtotal, 0.0), 2),
             "totalItems": safe_positive_int(total_items, 0),
+            "customer": serialized_customer,
+            "shippingAddress": shipping_address,
         }
     def fetch_product(product_id: str):
         try:
@@ -1411,6 +1500,8 @@ def create_app() -> Flask:
         name = str(payload.get("name", "")).strip()
         password = str(payload.get("password", ""))
         phone = str(payload.get("phone", "")).strip()
+        address_payload = payload.get("address")
+        normalized_address = normalize_address_payload(address_payload)
 
         if not email or not name or not password:
             return (
@@ -1439,6 +1530,8 @@ def create_app() -> Flask:
 
         if phone:
             user_document["phone"] = phone
+        if normalized_address:
+            user_document["address"] = normalized_address
 
         insert_result = db.users.insert_one(user_document)
 
@@ -1543,6 +1636,12 @@ def create_app() -> Flask:
         desired_name = str(payload.get("name", user.get("name", ""))).strip()
         desired_phone = str(payload.get("phone", user.get("phone", ""))).strip()
         new_password = str(payload.get("password", "")).strip()
+        address_provided = "address" in payload
+        normalized_address = (
+            normalize_address_payload(payload.get("address"))
+            if address_provided
+            else {}
+        )
 
         if not desired_email:
             return jsonify({"message": "Email is required."}), 400
@@ -1569,6 +1668,12 @@ def create_app() -> Flask:
         if new_password:
             hashed_pw = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt())
             updates["password"] = hashed_pw
+
+        if address_provided:
+            if normalized_address:
+                updates["address"] = normalized_address
+            elif user.get("address"):
+                unset_ops["address"] = ""
 
         if not updates and not unset_ops:
             return jsonify({"message": "No account changes detected."}), 400
@@ -2324,9 +2429,15 @@ def create_app() -> Flask:
 
     # Checkout
     @app.route("/api/checkout", methods=["POST"])
-    @jwt_required()
     def checkout():
-        current_user = get_jwt_identity()
+        verify_jwt_in_request(optional=True)
+        current_user_email = get_jwt_identity()
+        user_document = (
+            db.users.find_one({"email": current_user_email})
+            if current_user_email
+            else None
+        )
+
         payload = request.get_json(silent=True) or {}
         items = payload.get("items", [])
 
@@ -2342,26 +2453,116 @@ def create_app() -> Flask:
         if not normalized_items:
             return jsonify({"message": "Add at least one item to checkout."}), 400
 
+        customer_payload = payload.get("customer")
+        if not isinstance(customer_payload, dict):
+            customer_payload = {}
+
+        def clean_text(value: Optional[str]) -> str:
+            return str(value or "").strip()
+
+        name_source = customer_payload.get("name")
+        email_source = customer_payload.get("email")
+        phone_source = customer_payload.get("phone")
+
+        if not name_source and user_document:
+            name_source = user_document.get("name")
+        if not email_source and user_document:
+            email_source = user_document.get("email")
+        if not phone_source and user_document:
+            phone_source = user_document.get("phone")
+
+        customer_name = clean_text(name_source)
+        customer_email = normalize_email(email_source)
+        customer_phone = clean_text(phone_source)
+
+        if not customer_name:
+            return jsonify({"message": "Please provide the recipient name for delivery."}), 400
+        if not is_valid_email(customer_email):
+            return jsonify(
+                {"message": "Please provide a valid email address to receive updates."}
+            ), 400
+
+        address_payload = payload.get("address")
+        if not isinstance(address_payload, dict):
+            address_payload = {}
+        submitted_address = normalize_address_payload(address_payload)
+        stored_address = (
+            normalize_address_payload(user_document.get("address"))
+            if user_document and user_document.get("address")
+            else {}
+        )
+        normalized_stored_address = (
+            stored_address if is_complete_address(stored_address) else {}
+        )
+
+        if submitted_address and not is_complete_address(submitted_address):
+            return jsonify(
+                {
+                    "message": "Please complete all required delivery address fields before continuing."
+                }
+            ), 400
+
+        delivery_address = submitted_address or normalized_stored_address
+        if not delivery_address or not is_complete_address(delivery_address):
+            return jsonify(
+                {
+                    "message": "Add your delivery address so we know where to send your order."
+                }
+            ), 400
+
         totals = calculate_order_totals(normalized_items)
         order_number = f"LIME-{uuid4().hex[:8].upper()}"
+
+        customer_entry = {
+            "name": customer_name,
+            "email": customer_email,
+            "phone": customer_phone,
+            "type": "account" if current_user_email else "guest",
+        }
+
         order_document = {
-            "user": current_user,
             "items": normalized_items,
             "created_at": datetime.utcnow(),
             "order_number": order_number,
             "subtotal": totals["subtotal"],
             "total_items": totals["total_items"],
+            "customer": customer_entry,
+            "shipping_address": delivery_address,
         }
+
+        if current_user_email:
+            order_document["user"] = current_user_email
+
+        updated_token = None
+        updated_profile = None
+        requested_save = bool(payload.get("saveAddress"))
+        should_update_profile = (
+            current_user_email and requested_save and bool(submitted_address)
+        )
+
+        if should_update_profile:
+            db.users.update_one(
+                {"email": current_user_email},
+                {"$set": {"address": submitted_address}},
+            )
+            refreshed_user = db.users.find_one({"email": current_user_email})
+            if refreshed_user:
+                updated_profile = serialize_user_profile(refreshed_user)
+                updated_token = create_access_token(identity=current_user_email)
 
         insert_result = db.orders.insert_one(order_document)
         order_document["_id"] = insert_result.inserted_id
 
-        return jsonify(
-            {
-                "message": f"Checkout successful for {current_user}.",
-                "order": serialize_order(order_document),
-            }
-        )
+        response_payload = {
+            "message": "Delivery details locked in. Continue to payment to finish your order.",
+            "order": serialize_order(order_document),
+        }
+
+        if updated_profile and updated_token:
+            response_payload["access_token"] = updated_token
+            response_payload["user"] = updated_profile
+
+        return jsonify(response_payload)
 
     @app.route("/api/orders", methods=["GET"])
     @jwt_required()

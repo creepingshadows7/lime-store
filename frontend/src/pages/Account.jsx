@@ -6,12 +6,33 @@ import { getProfileInitial } from "../utils/profile";
 import { formatEuro } from "../utils/currency";
 import { formatPublishedDate } from "../utils/dates";
 
-const initialState = {
-  name: "",
-  email: "",
-  phone: "",
+const mapAddressToState = (address = {}) => ({
+  addressCountry:
+    typeof address.country === "string" ? address.country : "",
+  addressPostcode:
+    typeof address.postcode === "string" ? address.postcode : "",
+  addressCity: typeof address.city === "string" ? address.city : "",
+  addressLine1: typeof address.line1 === "string" ? address.line1 : "",
+  addressLine2: typeof address.line2 === "string" ? address.line2 : "",
+});
+
+const mapFormToAddressPayload = (values) => ({
+  country: values.addressCountry.trim(),
+  postcode: values.addressPostcode.trim(),
+  city: values.addressCity.trim(),
+  line1: values.addressLine1.trim(),
+  line2: values.addressLine2.trim(),
+});
+
+const buildFormValuesFromUser = (user = {}) => ({
+  name: typeof user.name === "string" ? user.name : "",
+  email: typeof user.email === "string" ? user.email : "",
+  phone: typeof user.phone === "string" ? user.phone : "",
   password: "",
-};
+  ...mapAddressToState(user.address ?? {}),
+});
+
+const initialState = buildFormValuesFromUser();
 
 const ORDER_DATE_OPTIONS = {
   year: "numeric",
@@ -45,6 +66,7 @@ const Account = () => {
       email: profile?.email ?? "",
       phone: profile?.phone ?? "",
       avatar_url: profile?.avatar_url ?? "",
+      ...mapAddressToState(profile?.address ?? {}),
     }),
     [profile]
   );
@@ -82,22 +104,14 @@ const Account = () => {
 
       try {
         const { data } = await apiClient.get("/api/account");
-        setFormValues({
-          name: data.user?.name ?? "",
-          email: data.user?.email ?? "",
-          phone: data.user?.phone ?? "",
-          password: "",
-        });
+        setFormValues(buildFormValuesFromUser(data.user ?? {}));
         setCurrentAvatarUrl(data.user?.avatar_url ?? "");
       } catch (error) {
-        setFeedback(
-          "We couldn't refresh your profile details. The view shows your last known information."
-        );
-        setFormValues((prev) => ({
-          ...prev,
-          ...sanitizedProfile,
-          password: "",
-        }));
+        const fallbackMessage =
+          error.response?.data?.message ??
+          "We couldn't refresh your profile details. The view shows your last known information.";
+        setFeedback(fallbackMessage);
+        setFormValues(buildFormValuesFromUser(profile ?? {}));
         setCurrentAvatarUrl(sanitizedProfile.avatar_url ?? "");
       } finally {
         setAvatarFile(null);
@@ -117,7 +131,7 @@ const Account = () => {
     };
 
     loadProfile();
-  }, [fileInputRef, isAuthenticated, sanitizedProfile]);
+  }, [fileInputRef, isAuthenticated, profile, sanitizedProfile]);
 
   const fetchOrders = useCallback(async () => {
     if (!isAuthenticated) {
@@ -439,6 +453,7 @@ const Account = () => {
         name: formValues.name.trim(),
         email: formValues.email.trim(),
         phone: formValues.phone.trim(),
+        address: mapFormToAddressPayload(formValues),
       };
 
       if (formValues.password.trim()) {
@@ -448,12 +463,7 @@ const Account = () => {
       const { data } = await apiClient.put("/api/account", payload);
       login(data.access_token, data.user);
 
-      setFormValues({
-        name: data.user?.name ?? "",
-        email: data.user?.email ?? "",
-        phone: data.user?.phone ?? "",
-        password: "",
-      });
+      setFormValues(buildFormValuesFromUser(data.user ?? {}));
       setCurrentAvatarUrl(data.user?.avatar_url ?? currentAvatarUrl);
 
       setStatus("success");
@@ -629,6 +639,79 @@ const Account = () => {
                   placeholder="+1 555 123 4567"
                   autoComplete="tel"
                 />
+              </div>
+              <div className="account-address">
+                <div className="account-address__header">
+                  <div>
+                    <p className="eyebrow eyebrow--muted">Delivery details</p>
+                    <h3>Preferred address</h3>
+                    <p className="account-address__subtitle">
+                      We auto-fill this information during checkout so you can confirm
+                      and continue.
+                    </p>
+                  </div>
+                </div>
+                <div className="account-address__grid">
+                  <label className="input-group">
+                    <span>Country</span>
+                    <input
+                      id="account-country"
+                      name="addressCountry"
+                      value={formValues.addressCountry}
+                      onChange={handleChange}
+                      autoComplete="country-name"
+                      placeholder="Netherlands"
+                    />
+                  </label>
+                  <label className="input-group">
+                    <span>Postcode</span>
+                    <input
+                      id="account-postcode"
+                      name="addressPostcode"
+                      value={formValues.addressPostcode}
+                      onChange={handleChange}
+                      autoComplete="postal-code"
+                      placeholder="1234 AB"
+                    />
+                  </label>
+                  <label className="input-group">
+                    <span>City</span>
+                    <input
+                      id="account-city"
+                      name="addressCity"
+                      value={formValues.addressCity}
+                      onChange={handleChange}
+                      autoComplete="address-level2"
+                      placeholder="Eindhoven"
+                    />
+                  </label>
+                  <label className="input-group input-group--span">
+                    <span>Address Line 1</span>
+                    <input
+                      id="account-line1"
+                      name="addressLine1"
+                      value={formValues.addressLine1}
+                      onChange={handleChange}
+                      autoComplete="address-line1"
+                      placeholder="Lime Lane 42"
+                    />
+                  </label>
+                  <label className="input-group input-group--span">
+                    <span>Address Line 2 (optional)</span>
+                    <input
+                      id="account-line2"
+                      name="addressLine2"
+                      value={formValues.addressLine2}
+                      onChange={handleChange}
+                      autoComplete="address-line2"
+                      placeholder="Apartment, suite, etc."
+                    />
+                  </label>
+                </div>
+                <p className="account-address__note">
+                  Leave fields blank if you prefer to share delivery details later—we’ll
+                  remind you at checkout.
+                </p>
               </div>
               <div className="input-group">
                 <span>New Password</span>

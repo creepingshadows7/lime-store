@@ -1,31 +1,15 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import apiClient from "../api/client";
-import { useAuth } from "../context/AuthContext";
+import { Link, useNavigate } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { formatEuro } from "../utils/currency";
 import { getPricingDetails } from "../utils/pricing";
 
 const Cart = () => {
-  const { isAuthenticated } = useAuth();
-  const { items, updateQuantity, removeItem, clearCart, subtotal, totalItems } =
-    useCart();
-  const [message, setMessage] = useState("");
-  const [status, setStatus] = useState("idle");
+  const navigate = useNavigate();
+  const { items, updateQuantity, removeItem, subtotal, totalItems } = useCart();
 
   const hasItems = items.length > 0;
   const formattedSubtotal = formatEuro(subtotal);
-  const checkoutDisabled =
-    status === "loading" || !hasItems || !isAuthenticated;
-
-  const resetFeedback = () => {
-    if (status !== "idle") {
-      setStatus("idle");
-    }
-    if (message) {
-      setMessage("");
-    }
-  };
+  const checkoutDisabled = !hasItems;
 
   const handleQuantityInput = (productId, variationId, variationName, value) => {
     if (!productId) {
@@ -35,7 +19,6 @@ const Cart = () => {
     if (!Number.isFinite(parsed)) {
       return;
     }
-    resetFeedback();
     updateQuantity(productId, parsed, variationId, variationName);
   };
 
@@ -43,7 +26,6 @@ const Cart = () => {
     if (!productId) {
       return;
     }
-    resetFeedback();
     updateQuantity(productId, nextQuantity, variationId, variationName);
   };
 
@@ -51,50 +33,14 @@ const Cart = () => {
     if (!productId) {
       return;
     }
-    resetFeedback();
     removeItem(productId, variationId, variationName);
   };
 
-  const handleCheckout = async () => {
+  const handleCheckout = () => {
     if (!hasItems) {
-      setStatus("error");
-      setMessage("Add at least one item before checking out.");
       return;
     }
-    if (!isAuthenticated) {
-      setStatus("error");
-      setMessage("Please log in to complete your order.");
-      return;
-    }
-
-    setStatus("loading");
-    setMessage("");
-
-    try {
-      const payloadItems = items.map((item) => ({
-        productId: item.id,
-        quantity: item.quantity,
-        name: item.name,
-        price: item.price,
-        listPrice: item.listPrice,
-        imageUrl: item.imageUrl,
-        variationId: item.variationId,
-        variationName: item.variationName,
-      }));
-      const { data } = await apiClient.post("/api/checkout", {
-        items: payloadItems,
-      });
-      setMessage(data?.message ?? "Checkout successful.");
-      setStatus("success");
-      clearCart();
-    } catch (err) {
-      const nextMessage =
-        err.response?.status === 401
-          ? "You need to log in before checking out."
-          : err.response?.data?.message ?? "Checkout failed. Try again later.";
-      setMessage(nextMessage);
-      setStatus("error");
-    }
+    navigate("/checkout");
   };
 
   return (
@@ -260,33 +206,15 @@ const Cart = () => {
           <button
             type="button"
             className="button button--gradient checkout-card__cta"
-            onClick={handleCheckout}
-            disabled={checkoutDisabled}
-          >
-            {status === "loading" ? "Processing..." : "Complete Purchase"}
-          </button>
-          {!isAuthenticated && (
-            <p className="form-feedback form-feedback--warning">
-              Please log in to complete your order.
-            </p>
-          )}
-          {message && (
-            <p
-              className={`form-feedback${
-                status === "error"
-                  ? " form-feedback--error"
-                  : status === "success"
-                  ? " form-feedback--success"
-                  : ""
-              }`}
-            >
-              {message}
-            </p>
-          )}
-        </aside>
-      </div>
-    </section>
-  );
+          onClick={handleCheckout}
+          disabled={checkoutDisabled}
+        >
+          Review &amp; checkout
+        </button>
+      </aside>
+    </div>
+  </section>
+);
 };
 
 export default Cart;
