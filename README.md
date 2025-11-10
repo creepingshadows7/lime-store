@@ -1,1 +1,1 @@
-v1.7.3 Home page UI changes, custom product uploads
+v1.7.4 Home page UI changes and bug fixes

@@ -440,6 +440,14 @@ const Home = () => {
               >
                 {isSavingShowcase ? "Publishing..." : "Publish selection"}
               </button>
+              <button
+                type="button"
+                className="showcase-editor__close"
+                onClick={handleToggleEditor}
+                aria-label="Close showcase editor"
+              >
+                ×
+              </button>
             </div>
           </div>
           <div className="showcase-editor__content">
