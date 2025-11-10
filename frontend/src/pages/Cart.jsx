@@ -26,7 +26,7 @@ const Cart = () => {
     }
   };
 
-  const handleQuantityInput = (productId, value) => {
+  const handleQuantityInput = (productId, variationId, variationName, value) => {
     if (!productId) {
       return;
     }
@@ -35,23 +35,23 @@ const Cart = () => {
       return;
     }
     resetFeedback();
-    updateQuantity(productId, parsed);
+    updateQuantity(productId, parsed, variationId, variationName);
   };
 
-  const handleAdjustQuantity = (productId, nextQuantity) => {
+  const handleAdjustQuantity = (productId, variationId, variationName, nextQuantity) => {
     if (!productId) {
       return;
     }
     resetFeedback();
-    updateQuantity(productId, nextQuantity);
+    updateQuantity(productId, nextQuantity, variationId, variationName);
   };
 
-  const handleRemoveItem = (productId) => {
+  const handleRemoveItem = (productId, variationId, variationName) => {
     if (!productId) {
       return;
     }
     resetFeedback();
-    removeItem(productId);
+    removeItem(productId, variationId, variationName);
   };
 
   const handleCheckout = async () => {
@@ -76,6 +76,8 @@ const Cart = () => {
         name: item.name,
         price: item.price,
         imageUrl: item.imageUrl,
+        variationId: item.variationId,
+        variationName: item.variationName,
       }));
       const { data } = await apiClient.post("/api/checkout", {
         items: payloadItems,
@@ -120,7 +122,10 @@ const Cart = () => {
                 const unitPriceLabel = formatEuro(item.price);
                 const lineTotalLabel = formatEuro(item.price * item.quantity);
                 return (
-                  <li key={item.id} className="cart-item">
+                  <li
+                    key={`${item.id}-${item.variationId || item.variationName || "default"}`}
+                    className="cart-item"
+                  >
                     <div className="cart-item__media" aria-hidden="true">
                       {item.imageUrl ? (
                         <img
@@ -136,10 +141,21 @@ const Cart = () => {
                     <div className="cart-item__details">
                       <h3>{item.name}</h3>
                       <p className="cart-item__price">{unitPriceLabel} each</p>
+                      {item.variationName && (
+                        <p className="cart-item__variation">
+                          Variation: {item.variationName}
+                        </p>
+                      )}
                       <button
                         type="button"
                         className="cart-item__remove"
-                        onClick={() => handleRemoveItem(item.id)}
+                        onClick={() =>
+                          handleRemoveItem(
+                            item.id,
+                            item.variationId,
+                            item.variationName
+                          )
+                        }
                       >
                         Remove
                       </button>
@@ -149,7 +165,12 @@ const Cart = () => {
                         type="button"
                         className="cart-item__control"
                         onClick={() =>
-                          handleAdjustQuantity(item.id, item.quantity - 1)
+                          handleAdjustQuantity(
+                            item.id,
+                            item.variationId,
+                            item.variationName,
+                            item.quantity - 1
+                          )
                         }
                         aria-label={`Decrease quantity for ${item.name}`}
                       >
@@ -161,7 +182,12 @@ const Cart = () => {
                         max="99"
                         value={item.quantity}
                         onChange={(event) =>
-                          handleQuantityInput(item.id, event.target.value)
+                          handleQuantityInput(
+                            item.id,
+                            item.variationId,
+                            item.variationName,
+                            event.target.value
+                          )
                         }
                         aria-label={`Quantity for ${item.name}`}
                       />
@@ -169,7 +195,12 @@ const Cart = () => {
                         type="button"
                         className="cart-item__control"
                         onClick={() =>
-                          handleAdjustQuantity(item.id, item.quantity + 1)
+                          handleAdjustQuantity(
+                            item.id,
+                            item.variationId,
+                            item.variationName,
+                            item.quantity + 1
+                          )
                         }
                         aria-label={`Increase quantity for ${item.name}`}
                       >

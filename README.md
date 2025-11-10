@@ -1,1 +1,1 @@
-v1.7.1 Recent Purchase in Account Section UI
+v1.7.2 Product variants changes and bug fixes

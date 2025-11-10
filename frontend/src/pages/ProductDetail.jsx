@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
@@ -32,12 +32,14 @@ const ProductDetail = () => {
   const { productId } = useParams();
   const { isAuthenticated, profile } = useAuth();
   const { addItem } = useCart();
+  const navigate = useNavigate();
   const [status, setStatus] = useState("loading");
   const [product, setProduct] = useState(null);
   const [error, setError] = useState("");
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [categories, setCategories] = useState([]);
+  const [selectedVariationId, setSelectedVariationId] = useState("");
 
   const applyCategories = useCallback((nextCategories) => {
     setCategories(normalizeCategoriesList(nextCategories ?? []));
@@ -134,6 +136,43 @@ const ProductDetail = () => {
       .filter((url, index, self) => url && self.indexOf(url) === index);
   }, [product]);
 
+  const normalizedVariations = useMemo(() => {
+    if (!product || !Array.isArray(product.variations)) {
+      return [];
+    }
+    return product.variations
+      .map((variation, index) => {
+        const name =
+          typeof variation?.name === "string" ? variation.name.trim() : "";
+        if (!name) {
+          return null;
+        }
+        const variationId =
+          (typeof variation?.id === "string" && variation.id.trim()) ||
+          (typeof variation?._id === "string" && variation._id.trim()) ||
+          (typeof variation?.tempId === "string" && variation.tempId.trim()) ||
+          `variation-${product.id}-${index}`;
+        return { id: variationId, name };
+      })
+      .filter(Boolean);
+  }, [product]);
+
+  useEffect(() => {
+    if (normalizedVariations.length === 0) {
+      setSelectedVariationId("");
+      return;
+    }
+    setSelectedVariationId((previous) => {
+      if (
+        previous &&
+        normalizedVariations.some((variation) => variation.id === previous)
+      ) {
+        return previous;
+      }
+      return normalizedVariations[0].id;
+    });
+  }, [normalizedVariations]);
+
   useEffect(() => {
     if (activeImageIndex >= imageUrls.length) {
       setActiveImageIndex(0);
@@ -198,16 +237,16 @@ const ProductDetail = () => {
   });
   const priceLabel = formatEuro(product.price);
   const primaryImageUrl = imageUrls[activeImageIndex] ?? "";
-  const variationNames = Array.isArray(product.variations)
-    ? product.variations
-        .map((variation) =>
-          typeof variation?.name === "string" ? variation.name.trim() : ""
-        )
-        .filter((name) => Boolean(name))
-    : [];
+  const selectedVariation =
+    normalizedVariations.find(
+      (variation) => variation.id === selectedVariationId
+    ) ?? null;
 
   const handleAddToCart = () => {
     if (!product) {
+      return;
+    }
+    if (normalizedVariations.length > 0 && !selectedVariation) {
       return;
     }
     addItem(
@@ -216,9 +255,12 @@ const ProductDetail = () => {
         name: product.name,
         price: product.price,
         imageUrl: primaryImageUrl,
+        variationId: selectedVariation?.id ?? "",
+        variationName: selectedVariation?.name ?? "",
       },
       1
     );
+    navigate("/cart");
   };
 
   const handleOpenEditor = () => {
@@ -304,17 +346,23 @@ const ProductDetail = () => {
               ))}
             </div>
           )}
-          {variationNames.length > 0 && (
+          {normalizedVariations.length > 0 && (
             <div className="product-detail__variations">
-              <h3>Available Variations</h3>
-              <div className="product-detail__variation-list">
-                {variationNames.map((variationName, index) => (
-                  <span
-                    key={`${product.id}-variation-pill-${index}`}
-                    className="product-detail__variation-pill"
+              <h3>Options</h3>
+              <div className="product-detail__variation-options">
+                {normalizedVariations.map((variation) => (
+                  <button
+                    type="button"
+                    key={variation.id}
+                    className={`product-detail__variation-option${
+                      selectedVariationId === variation.id
+                        ? " product-detail__variation-option--active"
+                        : ""
+                    }`}
+                    onClick={() => setSelectedVariationId(variation.id)}
                   >
-                    {variationName}
-                  </span>
+                    {variation.name}
+                  </button>
                 ))}
               </div>
             </div>

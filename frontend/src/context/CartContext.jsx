@@ -45,6 +45,27 @@ const normalizeCartProduct = (product) => {
       : typeof product.primaryImageUrl === "string"
       ? product.primaryImageUrl.trim()
       : "";
+  const variationIdSource =
+    product.variationId ??
+    product.variation_id ??
+    product.selectedVariationId ??
+    (product.variation && product.variation.id) ??
+    "";
+  const variationId =
+    typeof variationIdSource === "string"
+      ? variationIdSource.trim()
+      : typeof variationIdSource === "number"
+      ? String(variationIdSource)
+      : "";
+  const variationNameSource =
+    product.variationName ??
+    product.variation_name ??
+    (product.variation && product.variation.name) ??
+    "";
+  const variationName =
+    typeof variationNameSource === "string"
+      ? variationNameSource.trim()
+      : "";
 
   if (!id || !name) {
     return null;
@@ -55,6 +76,8 @@ const normalizeCartProduct = (product) => {
     name,
     price: Number.isFinite(price) ? price : 0,
     imageUrl,
+    variationId,
+    variationName,
   };
 };
 
@@ -79,6 +102,23 @@ const normalizeStoredCartItems = (value) => {
     });
   });
   return items;
+};
+
+const buildCartSignature = (item) => {
+  if (!item) {
+    return "";
+  }
+  const baseId =
+    typeof item.id === "string"
+      ? item.id
+      : typeof item.id === "number"
+      ? String(item.id)
+      : "";
+  const variationToken =
+    (typeof item.variationId === "string" && item.variationId) ||
+    (typeof item.variationName === "string" && item.variationName) ||
+    "default";
+  return `${baseId}::${variationToken}`;
 };
 
 const loadStoredCart = () => {
@@ -111,8 +151,9 @@ const cartReducer = (state, action) => {
         return state;
       }
 
+      const productSignature = buildCartSignature(normalizedProduct);
       const existingIndex = state.findIndex(
-        (item) => item.id === normalizedProduct.id
+        (item) => buildCartSignature(item) === productSignature
       );
 
       if (existingIndex === -1) {
@@ -142,10 +183,22 @@ const cartReducer = (state, action) => {
         return state;
       }
       if (requestedQuantity < CART_QTY_MIN) {
-        return state.filter((item) => item.id !== productId);
+        const signature = buildCartSignature({
+          id: productId,
+          variationId: action.payload.variationId,
+          variationName: action.payload.variationName,
+        });
+        return state.filter(
+          (item) => buildCartSignature(item) !== signature
+        );
       }
+      const signature = buildCartSignature({
+        id: productId,
+        variationId: action.payload.variationId,
+        variationName: action.payload.variationName,
+      });
       return state.map((item) =>
-        item.id === productId
+        buildCartSignature(item) === signature
           ? { ...item, quantity: clampQuantity(Math.round(requestedQuantity)) }
           : item
       );
@@ -156,7 +209,12 @@ const cartReducer = (state, action) => {
       if (!productId) {
         return state;
       }
-      return state.filter((item) => item.id !== productId);
+      const signature = buildCartSignature({
+        id: productId,
+        variationId: action.payload.variationId,
+        variationName: action.payload.variationName,
+      });
+      return state.filter((item) => buildCartSignature(item) !== signature);
     }
 
     case "CLEAR_CART":
@@ -189,15 +247,21 @@ export const CartProvider = ({ children }) => {
   );
 
   const updateQuantity = useCallback(
-    (productId, quantity) => {
-      dispatch({ type: "UPDATE_QUANTITY", payload: { productId, quantity } });
+    (productId, quantity, variationId, variationName) => {
+      dispatch({
+        type: "UPDATE_QUANTITY",
+        payload: { productId, quantity, variationId, variationName },
+      });
     },
     [dispatch]
   );
 
   const removeItem = useCallback(
-    (productId) => {
-      dispatch({ type: "REMOVE_ITEM", payload: { productId } });
+    (productId, variationId, variationName) => {
+      dispatch({
+        type: "REMOVE_ITEM",
+        payload: { productId, variationId, variationName },
+      });
     },
     [dispatch]
   );

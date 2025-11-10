@@ -150,7 +150,19 @@ const Account = () => {
 
   const orderHistory = useMemo(() => {
     return orders.map((order) => {
-      const items = Array.isArray(order?.items) ? order.items : [];
+      const rawItems = Array.isArray(order?.items) ? order.items : [];
+      const items = rawItems.map((item) => {
+        const variationName =
+          typeof item?.variationName === "string"
+            ? item.variationName.trim()
+            : typeof item?.variation_name === "string"
+            ? item.variation_name.trim()
+            : "";
+        return {
+          ...item,
+          variationName,
+        };
+      });
       const providedSubtotal = Number(order?.subtotal);
       const subtotal = Number.isFinite(providedSubtotal)
         ? providedSubtotal
@@ -182,42 +194,114 @@ const Account = () => {
     });
   }, [orders]);
 
-  const recentPurchases = useMemo(() => {
-    const flattened = [];
-    orderHistory.forEach((order) => {
-      const orderTimestamp = order.createdAtRaw
-        ? Date.parse(order.createdAtRaw)
-        : 0;
-      const readableDate = order.createdAtLabel || "Recently placed";
-      order.items.forEach((item, index) => {
-        const productId =
-          (typeof item?.productId === "string" && item.productId.trim()) ||
-          `order-${order.id || order.orderNumber}-${index}`;
-        const price = Number(item?.price) || 0;
-        const quantity = Number(item?.quantity) || 0;
-        const lineTotal =
-          Number(item?.lineTotal) || Number((price * quantity).toFixed(2));
-        flattened.push({
-          id: `${productId}-${index}`,
-          name:
-            (typeof item?.name === "string" && item.name.trim()) ||
-            "Curated Selection",
-          imageUrl:
-            (typeof item?.imageUrl === "string" && item.imageUrl.trim()) || "",
-          quantity,
-          price,
-          lineTotal,
-          orderNumber: order.orderNumber,
-          createdAtValue: orderTimestamp || 0,
-          createdAtLabel: readableDate,
-        });
-      });
-    });
-
-    return flattened
-      .sort((a, b) => b.createdAtValue - a.createdAtValue)
-      .slice(0, 6);
-  }, [orderHistory]);
+  const renderOrdersPanel = () => (
+    <div className="account-orders account-orders--inline">
+      <div className="account-orders__header">
+        <div>
+          <p className="eyebrow">Your Orders</p>
+          <h2>Track every lime indulgence</h2>
+          <p className="account-orders__subtitle">
+            Review each purchase with itemized details and totals.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="button button--outline account-orders__refresh"
+          onClick={handleRefreshOrders}
+          disabled={ordersStatus === "loading"}
+        >
+          {ordersStatus === "loading" ? "Refreshing..." : "Refresh"}
+        </button>
+      </div>
+      {ordersStatus === "loading" && (
+        <p className="page__status account-orders__status">
+          Fetching your latest orders...
+        </p>
+      )}
+      {ordersStatus === "error" && (
+        <p className="form-feedback form-feedback--error account-orders__status">
+          {ordersFeedback}
+        </p>
+      )}
+      {ordersStatus === "success" && orderHistory.length === 0 && (
+        <p className="page__status account-orders__status">
+          You have not completed a purchase yet. Once you do, it will appear
+          here.
+        </p>
+      )}
+      {orderHistory.length > 0 && (
+        <ul className="account-orders__timeline">
+          {orderHistory.map((order) => {
+            const orderItems = Array.isArray(order.items) ? order.items : [];
+            const createdAtLabel =
+              order.createdAtLabel || "Awaiting confirmation";
+            return (
+              <li
+                key={order.id || order.orderNumber}
+                className="account-orders__timeline-entry"
+              >
+                <header className="account-orders__timeline-header">
+                  <div>
+                    <p className="account-orders__number">
+                      {order.orderNumber || "Order"}
+                    </p>
+                    <p className="account-orders__date">{createdAtLabel}</p>
+                  </div>
+                  <div className="account-orders__totals">
+                    <span>
+                      {order.totalItems} item
+                      {order.totalItems === 1 ? "" : "s"}
+                    </span>
+                    <strong>{formatEuro(order.subtotal)}</strong>
+                  </div>
+                </header>
+                <div className="account-orders__timeline-items">
+                  {orderItems.map((item, index) => {
+                    const itemName =
+                      typeof item?.name === "string" && item.name.trim()
+                        ? item.name.trim()
+                        : "Curated Selection";
+                    const variationLabel =
+                      typeof item?.variationName === "string" &&
+                      item.variationName
+                        ? item.variationName
+                        : "";
+                    const displayName = variationLabel
+                      ? `${itemName} (${variationLabel})`
+                      : itemName;
+                    const quantity = Number(item?.quantity) || 0;
+                    const unitPrice = formatEuro(Number(item?.price) || 0);
+                    const lineTotalValue =
+                      Number(item?.lineTotal) ||
+                      Number((Number(item?.price) || 0) * quantity);
+                    const lineTotal = formatEuro(lineTotalValue);
+                    return (
+                      <div
+                        key={`${order.id || order.orderNumber}-${item?.productId || index}`}
+                        className="account-orders__timeline-item"
+                      >
+                        <div>
+                          <p className="account-orders__item-name">
+                            {displayName}
+                          </p>
+                          <p className="account-orders__item-meta">
+                            {quantity} x {unitPrice}
+                          </p>
+                        </div>
+                        <span className="account-orders__item-total">
+                          {lineTotal}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
 
   const handleRefreshOrders = () => {
     if (ordersStatus === "loading") {
@@ -419,6 +503,7 @@ const Account = () => {
           Keep your contact details polished and stay ready for exclusive drops
           and tailored recommendations.
         </p>
+        {renderOrdersPanel()}
       </div>
       <div className="account-card">
         {isLoadingProfile ? (
@@ -581,153 +666,6 @@ const Account = () => {
               )}
             </form>
           </>
-        )}
-      </div>
-      {ordersStatus === "success" && (
-        <div className="account-recent">
-          <div className="account-recent__header">
-            <div>
-              <p className="eyebrow">Recent purchases</p>
-              <h2>Your latest lime indulgences</h2>
-              <p className="account-recent__subtitle">
-                A quick glance at the tastings you selected most recently.
-              </p>
-            </div>
-          </div>
-          {recentPurchases.length === 0 ? (
-            <p className="page__status account-recent__status">
-              Once you complete an order it will be summarized here.
-            </p>
-          ) : (
-            <ul className="account-recent__list">
-              {recentPurchases.map((item) => (
-                <li key={item.id} className="account-recent__item">
-                  <div className="account-recent__media">
-                    {item.imageUrl ? (
-                      <img
-                        src={item.imageUrl}
-                        alt=""
-                        loading="lazy"
-                        className="account-recent__image"
-                      />
-                    ) : (
-                      <span className="account-recent__placeholder">LS</span>
-                    )}
-                  </div>
-                  <div className="account-recent__details">
-                    <p className="account-recent__name">{item.name}</p>
-                    <p className="account-recent__meta">
-                      {item.quantity} × {formatEuro(item.price)} •{" "}
-                      {item.createdAtLabel}
-                    </p>
-                  </div>
-                  <div className="account-recent__total">
-                    {formatEuro(item.lineTotal)}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-      <div className="account-orders">
-        <div className="account-orders__header">
-          <div>
-            <p className="eyebrow">Order history</p>
-            <h2>Every lime indulgence you have secured</h2>
-            <p className="account-orders__subtitle">
-              Track confirmations, quantities, and totals for each checkout.
-            </p>
-          </div>
-          <button
-            type="button"
-            className="button button--outline account-orders__refresh"
-            onClick={handleRefreshOrders}
-            disabled={ordersStatus === "loading"}
-          >
-            {ordersStatus === "loading" ? "Refreshing..." : "Refresh"}
-          </button>
-        </div>
-        {ordersStatus === "loading" && (
-          <p className="page__status account-orders__status">
-            Fetching your latest orders...
-          </p>
-        )}
-        {ordersStatus === "error" && (
-          <p className="form-feedback form-feedback--error account-orders__status">
-            {ordersFeedback}
-          </p>
-        )}
-        {ordersStatus === "success" && orderHistory.length === 0 && (
-          <p className="page__status account-orders__status">
-            You have not completed a purchase yet. Once you do, it will appear
-            here.
-          </p>
-        )}
-        {orderHistory.length > 0 && (
-          <ul className="account-orders__list">
-            {orderHistory.map((order) => {
-              const items = Array.isArray(order.items) ? order.items : [];
-              const previewItems = items.slice(0, 3);
-              const remainingCount =
-                items.length > 3 ? items.length - previewItems.length : 0;
-              const normalizedOrderNumber =
-                typeof order.orderNumber === "string"
-                  ? order.orderNumber.trim()
-                  : "";
-              const fallbackId =
-                typeof order.id === "string" ? order.id : order.orderNumber;
-              const orderLabel =
-                normalizedOrderNumber ||
-                (fallbackId
-                  ? `Order ${String(fallbackId).slice(-6).toUpperCase()}`
-                  : "Order");
-              const createdAtLabel =
-                order.createdAtLabel || "Awaiting confirmation";
-              return (
-                <li
-                  key={order.id || order.orderNumber || orderLabel}
-                  className="account-orders__item"
-                >
-                  <div className="account-orders__item-header">
-                    <div>
-                      <p className="account-orders__number">{orderLabel}</p>
-                      <p className="account-orders__date">{createdAtLabel}</p>
-                    </div>
-                    <div className="account-orders__totals">
-                      <span>
-                        {order.totalItems} item
-                        {order.totalItems === 1 ? "" : "s"}
-                      </span>
-                      <strong>{formatEuro(order.subtotal)}</strong>
-                    </div>
-                  </div>
-                  <div className="account-orders__products">
-                    {previewItems.map((item, index) => {
-                      const quantityLabel = Number(item?.quantity) || 0;
-                      const name =
-                        typeof item?.name === "string" && item.name.trim()
-                          ? item.name.trim()
-                          : "Lime indulgence";
-                      return (
-                        <span
-                          key={`order-${order.id || order.orderNumber}-${item?.productId || index}`}
-                          className="account-orders__product-chip"
-                        >
-                          {name} × {quantityLabel}
-                        </span>
-                      );
-                    })}
-                    {remainingCount > 0 && (
-                      <span className="account-orders__product-chip account-orders__product-chip--muted">
-                        +{remainingCount} more
-                      </span>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
         )}
       </div>
     </section>

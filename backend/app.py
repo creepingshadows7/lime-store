@@ -886,6 +886,25 @@ def create_app() -> Flask:
         image_url = str(
             payload.get("imageUrl") or payload.get("image_url") or ""
         ).strip()
+        variation_identifier = (
+            payload.get("variation_id")
+            or payload.get("variationId")
+            or payload.get("selectedVariationId")
+            or ""
+        )
+        if isinstance(variation_identifier, ObjectId):
+            variation_identifier = str(variation_identifier)
+        variation_id = (
+            str(variation_identifier).strip() if variation_identifier else ""
+        )
+        variation_name_source = (
+            payload.get("variation_name")
+            or payload.get("variationName")
+            or ""
+        )
+        variation_name = (
+            str(variation_name_source).strip() if variation_name_source else ""
+        )
 
         return {
             "product_id": product_id,
@@ -893,6 +912,8 @@ def create_app() -> Flask:
             "name": name,
             "price": round(price_value, 2),
             "image_url": image_url,
+            "variation_id": variation_id,
+            "variation_name": variation_name,
         }
 
     def calculate_order_totals(items: List[Dict]) -> Dict[str, float]:
@@ -954,6 +975,7 @@ def create_app() -> Flask:
                 "name": product_document.get("name", ""),
                 "price": safe_float(product_document.get("price"), 0.0),
                 "image_url": "",
+                "variations": product_document.get("variations") or [],
             }
 
             image_urls = product_document.get("image_urls")
@@ -989,6 +1011,8 @@ def create_app() -> Flask:
                         "price": 0,
                         "imageUrl": "",
                         "lineTotal": 0,
+                        "variationId": "",
+                        "variationName": "",
                     }
                 )
                 continue
@@ -1013,6 +1037,29 @@ def create_app() -> Flask:
             image_url = str(
                 entry.get("image_url") or entry.get("imageUrl") or ""
             ).strip()
+            variation_identifier = (
+                entry.get("variation_id")
+                or entry.get("variationId")
+                or entry.get("selectedVariationId")
+                or ""
+            )
+            if isinstance(variation_identifier, ObjectId):
+                variation_identifier = str(variation_identifier)
+            variation_id = (
+                str(variation_identifier).strip()
+                if variation_identifier
+                else ""
+            )
+            variation_name_source = (
+                entry.get("variation_name")
+                or entry.get("variationName")
+                or ""
+            )
+            variation_name = (
+                str(variation_name_source).strip()
+                if variation_name_source
+                else ""
+            )
 
             product_summary = fetch_product_summary(product_id) if product_id else None
 
@@ -1025,6 +1072,30 @@ def create_app() -> Flask:
             if not image_url and product_summary:
                 image_url = product_summary.get("image_url") or ""
 
+            if (
+                not variation_name
+                and variation_id
+                and product_summary
+                and isinstance(product_summary.get("variations"), list)
+            ):
+                for variation_entry in product_summary["variations"]:
+                    possible_id = (
+                        variation_entry.get("id")
+                        or variation_entry.get("_id")
+                        or variation_entry.get("tempId")
+                        or ""
+                    )
+                    possible_id = (
+                        str(possible_id).strip() if possible_id else ""
+                    )
+                    if possible_id and possible_id == variation_id:
+                        possible_name = str(
+                            variation_entry.get("name") or ""
+                        ).strip()
+                        if possible_name:
+                            variation_name = possible_name
+                        break
+
             line_total = round(price_value * quantity, 2)
             serialized_items.append(
                 {
@@ -1034,6 +1105,8 @@ def create_app() -> Flask:
                     "price": round(price_value, 2),
                     "imageUrl": image_url,
                     "lineTotal": line_total,
+                    "variationId": variation_id,
+                    "variationName": variation_name,
                 }
             )
 

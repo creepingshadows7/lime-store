@@ -647,10 +647,16 @@ const Products = () => {
     }
   };
 
-  const handleAddToCart = (event, product, imageUrl) => {
+  const handleAddToCart = (event, product, imageUrl, variationsList = []) => {
     event.preventDefault();
     event.stopPropagation();
     if (!product) {
+      return;
+    }
+    const hasVariations =
+      Array.isArray(variationsList) && variationsList.length > 0;
+    if (hasVariations) {
+      navigate(`/products/${product.id}`);
       return;
     }
     addItem(
@@ -659,6 +665,8 @@ const Products = () => {
         name: product.name,
         price: product.price,
         imageUrl,
+        variationId: "",
+        variationName: "",
       },
       1
     );
@@ -666,6 +674,7 @@ const Products = () => {
       state: "success",
       message: `${product.name} added to your cart.`,
     });
+    navigate("/cart");
   };
 
   const handleProductUpdated = (updatedProduct) => {
@@ -1094,16 +1103,31 @@ const Products = () => {
                 .filter((url, index, self) => url && self.indexOf(url) === index);
               const primaryImageUrl = imageUrls[0] ?? "";
               const createdAtLabel = formatPublishedDate(product.created_at);
-              const variationNames = Array.isArray(product.variations)
+              const normalizedVariations = Array.isArray(product.variations)
                 ? product.variations
-                    .map((variation) =>
-                      typeof variation?.name === "string"
-                        ? variation.name.trim()
-                        : ""
-                    )
-                    .filter((name) => Boolean(name))
+                    .map((variation, index) => {
+                      const name =
+                        typeof variation?.name === "string"
+                          ? variation.name.trim()
+                          : "";
+                      if (!name) {
+                        return null;
+                      }
+                      const variationId =
+                        (typeof variation?.id === "string" &&
+                          variation.id.trim()) ||
+                        (typeof variation?._id === "string" &&
+                          variation._id.trim()) ||
+                        (typeof variation?.tempId === "string" &&
+                          variation.tempId.trim()) ||
+                        `variation-${product.id}-${index}`;
+                      return { id: variationId, name };
+                    })
+                    .filter(Boolean)
                 : [];
-
+              const variationNames = normalizedVariations.map(
+                (variation) => variation.name
+              );
                 return (
                   <article
                   key={product.id}
@@ -1187,7 +1211,12 @@ const Products = () => {
                         type="button"
                         className="button button--outline product-card__button"
                         onClick={(event) =>
-                          handleAddToCart(event, product, primaryImageUrl)
+                          handleAddToCart(
+                            event,
+                            product,
+                            primaryImageUrl,
+                            normalizedVariations
+                          )
                         }
                       >
                         Add to Cart
