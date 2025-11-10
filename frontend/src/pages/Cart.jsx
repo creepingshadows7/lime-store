@@ -4,6 +4,7 @@ import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
 import { formatEuro } from "../utils/currency";
+import { getPricingDetails } from "../utils/pricing";
 
 const Cart = () => {
   const { isAuthenticated } = useAuth();
@@ -75,6 +76,7 @@ const Cart = () => {
         quantity: item.quantity,
         name: item.name,
         price: item.price,
+        listPrice: item.listPrice,
         imageUrl: item.imageUrl,
         variationId: item.variationId,
         variationName: item.variationName,
@@ -119,8 +121,15 @@ const Cart = () => {
           ) : (
             <ul className="cart-items">
               {items.map((item) => {
-                const unitPriceLabel = formatEuro(item.price);
-                const lineTotalLabel = formatEuro(item.price * item.quantity);
+                const pricing = getPricingDetails(
+                  item.listPrice ?? item.price,
+                  item.price
+                );
+                const unitPriceLabel = pricing.currentLabel;
+                const originalPriceLabel = pricing.hasDiscount
+                  ? pricing.baseLabel
+                  : null;
+                const lineTotalLabel = formatEuro(pricing.currentValue * item.quantity);
                 return (
                   <li
                     key={`${item.id}-${item.variationId || item.variationName || "default"}`}
@@ -140,7 +149,24 @@ const Cart = () => {
                     </div>
                     <div className="cart-item__details">
                       <h3>{item.name}</h3>
-                      <p className="cart-item__price">{unitPriceLabel} each</p>
+                      <div className="cart-item__price">
+                        <div className="price-stack price-stack--compact price-stack--vertical">
+                          <span className="price-stack__current">{unitPriceLabel}</span>
+                          {pricing.hasDiscount && originalPriceLabel && (
+                            <>
+                              <span className="price-stack__original">
+                                {originalPriceLabel}
+                              </span>
+                              {pricing.savingsPercent && (
+                                <span className="price-stack__badge">
+                                  Save {pricing.savingsPercent}%
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        <span className="cart-item__price-note">per item</span>
+                      </div>
                       {item.variationName && (
                         <p className="cart-item__variation">
                           Variation: {item.variationName}

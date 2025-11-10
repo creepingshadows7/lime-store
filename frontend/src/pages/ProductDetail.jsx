@@ -4,8 +4,8 @@ import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
-import { formatEuro } from "../utils/currency";
 import { formatPublishedDate } from "../utils/dates";
+import { getPricingDetails } from "../utils/pricing";
 import ProductEditor from "../components/ProductEditor";
 
 const normalizeCategoriesList = (categoryList = []) => {
@@ -235,7 +235,7 @@ const ProductDetail = () => {
     month: "long",
     day: "numeric",
   });
-  const priceLabel = formatEuro(product.price);
+  const pricing = getPricingDetails(product.price, product.discount_price);
   const primaryImageUrl = imageUrls[activeImageIndex] ?? "";
   const selectedVariation =
     normalizedVariations.find(
@@ -253,7 +253,8 @@ const ProductDetail = () => {
       {
         id: product.id,
         name: product.name,
-        price: product.price,
+        price: pricing.currentValue,
+        listPrice: pricing.baseValue,
         imageUrl: primaryImageUrl,
         variationId: selectedVariation?.id ?? "",
         variationName: selectedVariation?.name ?? "",
@@ -327,7 +328,19 @@ const ProductDetail = () => {
         <div className="product-detail__content">
           <header className="product-detail__header">
             <h1>{product.name}</h1>
-            <p className="product-detail__price">{priceLabel}</p>
+            <div className="price-stack price-stack--large">
+              <span className="price-stack__current">{pricing.currentLabel}</span>
+              {pricing.hasDiscount && (
+                <>
+                  <span className="price-stack__original">{pricing.baseLabel}</span>
+                  {pricing.savingsPercent && (
+                    <span className="price-stack__badge">
+                      Save {pricing.savingsPercent}%
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
           </header>
           <p className="product-detail__description">
             {product.description?.trim().length

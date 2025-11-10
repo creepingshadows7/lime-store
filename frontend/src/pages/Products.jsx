@@ -4,8 +4,8 @@ import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
-import { formatEuro } from "../utils/currency";
 import { formatPublishedDate } from "../utils/dates";
+import { getPricingDetails } from "../utils/pricing";
 import ProductEditor from "../components/ProductEditor";
 import CategorySelector from "../components/CategorySelector";
 import VariationEditor from "../components/VariationEditor";
@@ -659,11 +659,13 @@ const Products = () => {
       navigate(`/products/${product.id}`);
       return;
     }
+    const pricing = getPricingDetails(product.price, product.discount_price);
     addItem(
       {
         id: product.id,
         name: product.name,
-        price: product.price,
+        price: pricing.currentValue,
+        listPrice: pricing.baseValue,
         imageUrl,
         variationId: "",
         variationName: "",
@@ -1080,7 +1082,7 @@ const Products = () => {
           ) : (
             <div className="product-grid product-grid--elevated">
             {filteredProducts.map((product) => {
-              const priceLabel = formatEuro(product.price);
+              const pricing = getPricingDetails(product.price, product.discount_price);
               const rawPublisherName =
                 typeof product.created_by_name === "string"
                   ? product.created_by_name.trim()
@@ -1206,7 +1208,23 @@ const Products = () => {
                       </div>
                     )}
                     <div className="product-card__footer">
-                      <span className="product-card__price">{priceLabel}</span>
+                      <div className="price-stack price-stack--tight">
+                        <span className="price-stack__current">
+                          {pricing.currentLabel}
+                        </span>
+                        {pricing.hasDiscount && (
+                          <>
+                            <span className="price-stack__original">
+                              {pricing.baseLabel}
+                            </span>
+                            {pricing.savingsPercent && (
+                              <span className="price-stack__badge">
+                                Save {pricing.savingsPercent}%
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
                       <button
                         type="button"
                         className="button button--outline product-card__button"

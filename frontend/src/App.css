@@ -210,6 +210,53 @@
   color: var(--text-primary);
 }
 
+.price-stack {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.price-stack--tight {
+  gap: 0.3rem;
+}
+
+.price-stack--compact {
+  gap: 0.2rem;
+}
+
+.price-stack--vertical {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.price-stack--large .price-stack__current {
+  font-size: clamp(1.8rem, 3vw, 2.35rem);
+}
+
+.price-stack__current {
+  font-weight: 700;
+  color: var(--accent-lime);
+  font-size: 1.2rem;
+}
+
+.price-stack__original {
+  text-decoration: line-through;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.price-stack__badge {
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent-lime);
+  background: rgba(19, 38, 28, 0.85);
+  border: 1px solid rgba(169, 255, 124, 0.35);
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+}
+
 .account-chip {
   display: inline-flex;
   align-items: center;
@@ -1742,6 +1789,16 @@
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.95rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.cart-item__price-note {
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .cart-item__variation {

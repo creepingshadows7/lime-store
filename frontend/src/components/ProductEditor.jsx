@@ -10,6 +10,7 @@ import VariationEditor from "./VariationEditor";
 const initialFormState = {
   name: "",
   price: "",
+  discount_price: "",
   description: "",
 };
 
@@ -277,6 +278,7 @@ const ProductEditor = ({
           setFormValues({
             name: loadedProduct.name ?? "",
             price: loadedProduct.price ?? "",
+            discount_price: loadedProduct.discount_price ?? "",
             description: loadedProduct.description ?? "",
           });
           setExistingImages(buildExistingImageState(loadedProduct));
@@ -384,6 +386,7 @@ const ProductEditor = ({
     setFormValues({
       name: product.name ?? "",
       price: product.price ?? "",
+      discount_price: product.discount_price ?? "",
       description: product.description ?? "",
     });
     setExistingImages(buildExistingImageState(product));
@@ -411,6 +414,10 @@ const ProductEditor = ({
     const name = formValues.name.trim();
     const description = formValues.description.trim();
     const cleanedPrice = formValues.price.toString().trim();
+    const cleanedDiscount =
+      formValues.discount_price !== null && formValues.discount_price !== undefined
+        ? formValues.discount_price.toString().trim()
+        : "";
 
     if (name.length < 3) {
       setFormStatus("error");
@@ -445,7 +452,24 @@ const ProductEditor = ({
 
     const formData = new FormData();
     formData.append("name", name);
+    let discountPayload = "";
+    if (cleanedDiscount) {
+      const numericDiscount = Number.parseFloat(cleanedDiscount);
+      if (!Number.isFinite(numericDiscount) || numericDiscount <= 0) {
+        setFormStatus("error");
+        setFormFeedback("Provide a realistic discount price greater than zero.");
+        return;
+      }
+      if (numericDiscount >= numericPrice) {
+        setFormStatus("error");
+        setFormFeedback("Discount price must stay below the standard price.");
+        return;
+      }
+      discountPayload = numericDiscount.toFixed(2);
+    }
+
     formData.append("price", numericPrice.toString());
+    formData.append("discount_price", discountPayload);
     formData.append("description", description);
     formData.append(
       "category_ids",
@@ -481,6 +505,7 @@ const ProductEditor = ({
         setFormValues({
           name: updatedProduct.name ?? "",
           price: updatedProduct.price ?? "",
+          discount_price: updatedProduct.discount_price ?? "",
           description: updatedProduct.description ?? "",
         });
         setSelectedImageFiles([]);
@@ -705,6 +730,22 @@ const ProductEditor = ({
             />
           </label>
         </div>
+        <label className="input-group">
+          <span>Discounted Price (optional)</span>
+          <input
+            id="product-discount-price"
+            name="discount_price"
+            type="number"
+            step="0.01"
+            min="0"
+            value={formValues.discount_price}
+            onChange={handleFieldChange}
+            placeholder="18.00"
+          />
+          <span className="input-hint">
+            Provide a special rate below the standard price to highlight limited-time offers.
+          </span>
+        </label>
         <label className="input-group">
           <span>Product Gallery</span>
           <input

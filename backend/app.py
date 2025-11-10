@@ -760,6 +760,18 @@ def create_app() -> Flask:
         except (TypeError, ValueError):
             price_value = 0.0
 
+        discount_raw = product_document.get("discount_price")
+        try:
+            discount_value = float(discount_raw)
+            if not math.isfinite(discount_value):
+                discount_value = None
+        except (TypeError, ValueError):
+            discount_value = None
+        if discount_value is not None and discount_value <= 0:
+            discount_value = None
+        if discount_value is not None and discount_value >= price_value:
+            discount_value = None
+
         raw_filenames = product_document.get("image_filenames")
         image_filenames: List[str] = []
         if isinstance(raw_filenames, list):
@@ -843,6 +855,7 @@ def create_app() -> Flask:
             "id": str(product_document.get("_id")),
             "name": product_document.get("name", ""),
             "price": f"{price_value:.2f}",
+            "discount_price": f"{discount_value:.2f}" if discount_value is not None else None,
             "description": product_document.get("description", ""),
             "image_url": primary_image_url,
             "image_urls": image_urls,
@@ -1878,6 +1891,33 @@ def create_app() -> Flask:
         if price_value <= 0:
             return jsonify({"message": "Price must be greater than zero."}), 400
 
+        raw_discount_price = payload.get("discount_price", "")
+        discount_price_value: Optional[float] = None
+        if isinstance(raw_discount_price, (int, float)) or (
+            isinstance(raw_discount_price, str) and raw_discount_price.strip()
+        ):
+            try:
+                discount_price_value = round(float(raw_discount_price), 2)
+            except (TypeError, ValueError):
+                return (
+                    jsonify({"message": "Discount price must be a valid number."}),
+                    400,
+                )
+            if discount_price_value <= 0:
+                return (
+                    jsonify({"message": "Discount price must be greater than zero."}),
+                    400,
+                )
+            if discount_price_value >= price_value:
+                return (
+                    jsonify(
+                        {
+                            "message": "Discount price must be lower than the standard price."
+                        }
+                    ),
+                    400,
+                )
+
         saved_filenames, image_error = save_product_images(image_files)
         if image_error:
             return jsonify({"message": image_error}), 400
@@ -1908,6 +1948,8 @@ def create_app() -> Flask:
             "image_filenames": saved_filenames,
             "image_filename": saved_filenames[0],
         }
+        if discount_price_value is not None:
+            product_document["discount_price"] = discount_price_value
         if resolved_category_ids:
             product_document["category_ids"] = resolved_category_ids
         if variations_data:
@@ -1945,6 +1987,8 @@ def create_app() -> Flask:
                 jsonify({"message": "You do not have permission to modify this product."}),
                 403,
             )
+
+        existing_price_value = safe_float(product_document.get("price"), 0.0)
 
         payload = request.form.to_dict() if request.form else {}
         if not payload and request.is_json:
@@ -2042,6 +2086,44 @@ def create_app() -> Flask:
             if price_value <= 0:
                 return jsonify({"message": "Price must be greater than zero."}), 400
             updates["price"] = price_value
+            existing_price_value = price_value
+
+        if "discount_price" in payload:
+            raw_discount = payload.get("discount_price")
+            discount_value: Optional[float] = None
+            has_value = False
+            if isinstance(raw_discount, (int, float)):
+                has_value = True
+            elif isinstance(raw_discount, str) and raw_discount.strip():
+                has_value = True
+
+            if has_value:
+                try:
+                    discount_value = round(float(raw_discount), 2)
+                except (TypeError, ValueError):
+                    return jsonify({"message": "Discount price must be a valid number."}), 400
+
+                if discount_value <= 0:
+                    return (
+                        jsonify({"message": "Discount price must be greater than zero."}),
+                        400,
+                    )
+
+                comparison_price = updates.get("price", existing_price_value)
+                try:
+                    comparison_price = float(comparison_price)
+                except (TypeError, ValueError):
+                    comparison_price = existing_price_value
+
+                if discount_value >= comparison_price:
+                    return (
+                        jsonify(
+                            {"message": "Discount price must be lower than the standard price."}
+                        ),
+                        400,
+                    )
+
+            updates["discount_price"] = discount_value
 
         categories_changed = any(
             key in payload for key in ("category_ids", "new_categories", "categories")

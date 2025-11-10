@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import apiClient from "../api/client";
-import { formatEuro } from "../utils/currency";
 import { useAuth } from "../context/AuthContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
+import { getPricingDetails } from "../utils/pricing";
 
 const normalizeString = (value) =>
   typeof value === "string" ? value.trim() : "";
@@ -218,6 +218,7 @@ const Home = () => {
         const imageCount = imageUrls.length;
         const productId =
           normalizeString(product?.id) || deriveProductId(product, index);
+        const pricing = getPricingDetails(product?.price, product?.discount_price);
         const provenance =
           normalizeString(product?.origin) ||
           normalizeString(product?.region) ||
@@ -233,7 +234,7 @@ const Home = () => {
         return {
           id: productId,
           productName,
-          priceLabel: formatEuro(product?.price),
+          pricing,
           description,
           badge,
           provenance,
@@ -371,9 +372,23 @@ const Home = () => {
                 <p className="showcase-card__eyebrow">{item.provenance}</p>
                 <div className="showcase-card__heading">
                   <h2 className="showcase-card__name">{item.productName}</h2>
-                  <span className="showcase-card__price">
-                    {item.priceLabel}
-                  </span>
+                  <div className="price-stack price-stack--tight">
+                    <span className="price-stack__current">
+                      {item.pricing.currentLabel}
+                    </span>
+                    {item.pricing.hasDiscount && (
+                      <>
+                        <span className="price-stack__original">
+                          {item.pricing.baseLabel}
+                        </span>
+                        {item.pricing.savingsPercent && (
+                          <span className="price-stack__badge">
+                            Save {item.pricing.savingsPercent}%
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
                 <p className="showcase-card__description">
                   {item.description}
@@ -460,6 +475,9 @@ const Home = () => {
                   (Array.isArray(product?.image_urls)
                     ? product.image_urls[0]
                     : "");
+                const slotPricing = product
+                  ? getPricingDetails(product.price, product.discount_price)
+                  : null;
 
                 return (
                   <div key={productId} className="showcase-slot">
@@ -477,15 +495,31 @@ const Home = () => {
                           <div className="showcase-slot__image showcase-slot__image--placeholder">
                             Lime
                           </div>
+                      )}
+                      <div className="showcase-slot__details">
+                        <p className="showcase-slot__name">{product.name}</p>
+                        {slotPricing && (
+                          <div className="price-stack price-stack--compact">
+                            <span className="price-stack__current">
+                              {slotPricing.currentLabel}
+                            </span>
+                            {slotPricing.hasDiscount && (
+                              <>
+                                <span className="price-stack__original">
+                                  {slotPricing.baseLabel}
+                                </span>
+                                {slotPricing.savingsPercent && (
+                                  <span className="price-stack__badge">
+                                    Save {slotPricing.savingsPercent}%
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </div>
                         )}
-                        <div className="showcase-slot__details">
-                          <p className="showcase-slot__name">{product.name}</p>
-                          <p className="showcase-slot__price">
-                            {formatEuro(product.price)}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
+                      </div>
+                      <button
+                        type="button"
                           className="showcase-slot__remove"
                           onClick={() => handleRemoveFeaturedSlot(index)}
                           aria-label={`Remove ${product.name} from slot ${index + 1}`}
@@ -522,22 +556,26 @@ const Home = () => {
                   : "You do not have any products online yet."}
               </p>
             ) : (
-              <div className="showcase-editor__grid">
-                {filteredInventory.map((product) => {
-                  const productId = resolveProductId(product);
-                  const isSelected = selectedFeaturedIds.includes(productId);
-                  const selectionIndex =
-                    selectedFeaturedIds.indexOf(productId) + 1;
-                  const coverImage =
-                    product.image_url ||
-                    (Array.isArray(product.image_urls)
-                      ? product.image_urls[0]
-                      : "");
+            <div className="showcase-editor__grid">
+              {filteredInventory.map((product) => {
+                const productId = resolveProductId(product);
+                const isSelected = selectedFeaturedIds.includes(productId);
+                const selectionIndex =
+                  selectedFeaturedIds.indexOf(productId) + 1;
+                const coverImage =
+                  product.image_url ||
+                  (Array.isArray(product.image_urls)
+                    ? product.image_urls[0]
+                    : "");
+                const pickerPricing = getPricingDetails(
+                  product.price,
+                  product.discount_price
+                );
 
-                  return (
-                    <button
-                      type="button"
-                      key={productId || product.name}
+                return (
+                  <button
+                    type="button"
+                    key={productId || product.name}
                       className={`showcase-picker-card${
                         isSelected ? " showcase-picker-card--selected" : ""
                       }`}
@@ -562,16 +600,30 @@ const Home = () => {
                           </span>
                         ) : null}
                       </div>
-                      <div className="showcase-picker-card__body">
-                        <p className="showcase-picker-card__name">
-                          {product.name}
-                        </p>
-                        <p className="showcase-picker-card__meta">
-                          {formatEuro(product.price)}
-                        </p>
-                        <p className="showcase-picker-card__creator">
-                          {product.created_by_name
-                            ? `By ${product.created_by_name}`
+                    <div className="showcase-picker-card__body">
+                      <p className="showcase-picker-card__name">
+                        {product.name}
+                      </p>
+                      <div className="price-stack price-stack--compact">
+                        <span className="price-stack__current">
+                          {pickerPricing.currentLabel}
+                        </span>
+                        {pickerPricing.hasDiscount && (
+                          <>
+                            <span className="price-stack__original">
+                              {pickerPricing.baseLabel}
+                            </span>
+                            {pickerPricing.savingsPercent && (
+                              <span className="price-stack__badge">
+                                Save {pickerPricing.savingsPercent}%
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      <p className="showcase-picker-card__creator">
+                        {product.created_by_name
+                          ? `By ${product.created_by_name}`
                             : "Seller unknown"}
                         </p>
                       </div>

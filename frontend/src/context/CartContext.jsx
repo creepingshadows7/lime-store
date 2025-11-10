@@ -18,6 +18,14 @@ const isBrowser = () => typeof window !== "undefined";
 const clampQuantity = (quantity) =>
   Math.min(CART_QTY_MAX, Math.max(CART_QTY_MIN, quantity));
 
+const parseMoneyValue = (value) => {
+  if (value === null || value === undefined || value === "") {
+    return NaN;
+  }
+  const numeric = Number.parseFloat(value);
+  return Number.isFinite(numeric) ? numeric : NaN;
+};
+
 const normalizeCartProduct = (product) => {
   if (!product) {
     return null;
@@ -36,7 +44,30 @@ const normalizeCartProduct = (product) => {
       : "";
   const name =
     typeof product.name === "string" ? product.name.trim() : product.title ?? "";
-  const price = Number(product.price);
+  const rawListPrice =
+    product.listPrice ??
+    product.originalPrice ??
+    product.regularPrice ??
+    product.basePrice ??
+    product.fullPrice ??
+    product.price ??
+    product.discount_price;
+  const rawSalePrice =
+    product.price ??
+    product.discount_price ??
+    product.salePrice ??
+    product.sale_price ??
+    product.currentPrice;
+  const parsedListPrice = parseMoneyValue(rawListPrice);
+  const parsedSalePrice = parseMoneyValue(rawSalePrice);
+  const listPrice = Number.isFinite(parsedListPrice)
+    ? parsedListPrice
+    : Number.isFinite(parsedSalePrice)
+    ? parsedSalePrice
+    : 0;
+  const price = Number.isFinite(parsedSalePrice)
+    ? parsedSalePrice
+    : listPrice;
   const imageUrl =
     typeof product.imageUrl === "string"
       ? product.imageUrl.trim()
@@ -75,6 +106,7 @@ const normalizeCartProduct = (product) => {
     id,
     name,
     price: Number.isFinite(price) ? price : 0,
+    listPrice: Number.isFinite(listPrice) ? listPrice : Number.isFinite(price) ? price : 0,
     imageUrl,
     variationId,
     variationName,
@@ -167,6 +199,8 @@ const cartReducer = (state, action) => {
         index === existingIndex
           ? {
               ...item,
+              price: normalizedProduct.price,
+              listPrice: normalizedProduct.listPrice,
               quantity: clampQuantity(item.quantity + normalizedQuantity),
             }
           : item
