@@ -1,0 +1,3 @@
+To do list:
+
+Fix Safari compatibility issues

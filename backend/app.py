@@ -5,7 +5,7 @@ import re
 import secrets
 import unicodedata
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 from urllib.parse import urljoin, urlparse
 
@@ -71,6 +71,7 @@ def create_app() -> Flask:
     JWTManager(app)
     mongo = PyMongo(app)
     db = mongo.db
+    featured_selection_collection = db.featured_products
 
     email_regex = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     brand_colors = {
@@ -136,6 +137,8 @@ def create_app() -> Flask:
 
     ALLOWED_USER_ROLES = {"admin", "seller", "standard"}
     MAX_PRODUCT_VARIATIONS = 25
+    FEATURED_SHOWCASE_LIMIT = 4
+    FEATURED_SELECTION_ID = "home_showcase_selection"
 
     def normalize_email(value: Optional[str]) -> str:
         return str(value or "").strip().lower()
@@ -593,6 +596,14 @@ def create_app() -> Flask:
 
         return normalized, None
 
+    def normalize_object_id_value(value):
+        if isinstance(value, ObjectId):
+            return value
+        try:
+            return ObjectId(str(value))
+        except (InvalidId, TypeError):
+            return None
+
     def normalize_object_id_list(values) -> List[ObjectId]:
         normalized_ids: List[ObjectId] = []
         if not values:
@@ -845,6 +856,94 @@ def create_app() -> Flask:
             "categories": serialized_categories,
             "variations": variations_list,
         }
+
+    def build_product_serialization_context(
+        product_documents,
+    ) -> Tuple[Dict[str, str], Dict[ObjectId, Dict]]:
+        if not product_documents:
+            return {}, {}
+
+        author_emails = {
+            normalize_email(document.get("created_by"))
+            for document in product_documents
+            if document.get("created_by")
+        }
+        author_emails = {email for email in author_emails if email}
+
+        user_names: Dict[str, str] = {}
+        if author_emails:
+            cursor = db.users.find({"email": {"$in": list(author_emails)}})
+            for user_document in cursor:
+                normalized_email = normalize_email(user_document.get("email"))
+                if normalized_email:
+                    user_names[normalized_email] = user_document.get("name", "") or ""
+        if DEFAULT_ADMIN_EMAIL in author_emails:
+            user_names.setdefault(DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_NAME)
+
+        category_ids: Set[ObjectId] = set()
+        for document in product_documents:
+            raw_category_ids = document.get("category_ids")
+            if not isinstance(raw_category_ids, list):
+                continue
+            for raw_id in raw_category_ids:
+                normalized_id = normalize_object_id_value(raw_id)
+                if normalized_id:
+                    category_ids.add(normalized_id)
+
+        category_map = fetch_categories_by_ids(category_ids)
+        return user_names, category_map
+
+    def resolve_featured_product_documents(limit=FEATURED_SHOWCASE_LIMIT):
+        ensure_seed_products()
+        selection_document = featured_selection_collection.find_one(
+            {"_id": FEATURED_SELECTION_ID}
+        )
+        curated_ids: List[str] = []
+        curated_docs: List[Dict] = []
+        normalized_object_ids: List[ObjectId] = []
+
+        if selection_document:
+            raw_ids = selection_document.get("product_ids") or []
+            for raw in raw_ids:
+                normalized_object_id = normalize_object_id_value(raw)
+                if not normalized_object_id:
+                    continue
+                stringified_id = str(normalized_object_id)
+                if stringified_id in curated_ids:
+                    continue
+                curated_ids.append(stringified_id)
+                normalized_object_ids.append(normalized_object_id)
+                if len(curated_ids) >= limit:
+                    break
+            if normalized_object_ids:
+                fetched_docs = list(
+                    db.products.find({"_id": {"$in": normalized_object_ids}})
+                )
+                doc_map = {str(document["_id"]): document for document in fetched_docs}
+                curated_docs = [
+                    doc_map[string_id]
+                    for string_id in curated_ids
+                    if string_id in doc_map
+                ]
+
+        source = "curated" if curated_docs else "recent"
+        used_ids = {document["_id"] for document in curated_docs}
+        remaining_slots = max(0, limit - len(curated_docs))
+        if remaining_slots > 0:
+            fallback_filter = {"_id": {"$nin": list(used_ids)}} if used_ids else {}
+            fallback_cursor = (
+                db.products.find(fallback_filter)
+                .sort("created_at", -1)
+                .limit(remaining_slots)
+            )
+            fallback_docs = list(fallback_cursor)
+            curated_docs.extend(fallback_docs)
+            if fallback_docs and curated_ids:
+                source = "mixed"
+            elif fallback_docs and not curated_ids:
+                source = "recent"
+
+        return curated_docs[:limit], curated_ids, source
 
     def safe_float(value, default=0.0):
         try:
@@ -1571,35 +1670,7 @@ def create_app() -> Flask:
         ensure_seed_products()
         product_docs = list(db.products.find().sort("created_at", -1))
 
-        author_emails = {
-            normalize_email(document.get("created_by"))
-            for document in product_docs
-            if document.get("created_by")
-        }
-        user_names: Dict[str, str] = {}
-        if author_emails:
-            for user_document in db.users.find({"email": {"$in": list(author_emails)}}):
-                normalized_email = normalize_email(user_document.get("email"))
-                if normalized_email:
-                    user_names[normalized_email] = user_document.get("name", "") or ""
-        if DEFAULT_ADMIN_EMAIL in author_emails:
-            user_names.setdefault(DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_NAME)
-
-        category_ids: Set[ObjectId] = set()
-        for document in product_docs:
-            raw_category_ids = document.get("category_ids")
-            if not isinstance(raw_category_ids, list):
-                continue
-            for raw_id in raw_category_ids:
-                if isinstance(raw_id, ObjectId):
-                    category_ids.add(raw_id)
-                    continue
-                try:
-                    category_ids.add(ObjectId(str(raw_id)))
-                except (InvalidId, TypeError):
-                    continue
-
-        category_map = fetch_categories_by_ids(category_ids)
+        user_names, category_map = build_product_serialization_context(product_docs)
 
         products = [
             serialize_product(
@@ -1608,6 +1679,146 @@ def create_app() -> Flask:
             for document in product_docs
         ]
         return jsonify({"products": products})
+
+    @app.route("/api/featured-products", methods=["GET"])
+    def get_featured_products():
+        product_docs, requested_ids, source = resolve_featured_product_documents()
+
+        if not product_docs:
+            return jsonify(
+                {
+                    "products": [],
+                    "requested_ids": requested_ids,
+                    "source": source,
+                    "limit": FEATURED_SHOWCASE_LIMIT,
+                }
+            )
+
+        user_names, category_map = build_product_serialization_context(product_docs)
+        products = [
+            serialize_product(
+                document, user_names=user_names, category_map=category_map
+            )
+            for document in product_docs
+        ]
+
+        return jsonify(
+            {
+                "products": products,
+                "requested_ids": requested_ids,
+                "source": source,
+                "limit": FEATURED_SHOWCASE_LIMIT,
+            }
+        )
+
+    @app.route("/api/featured-products", methods=["PUT"])
+    @jwt_required()
+    def update_featured_products():
+        current_user, permission_error = require_admin_user()
+        if permission_error:
+            return permission_error
+
+        payload = request.get_json(silent=True) or {}
+        raw_ids = payload.get("product_ids")
+
+        if not isinstance(raw_ids, list):
+            return (
+                jsonify(
+                    {
+                        "message": "Provide the desired `product_ids` list to curate the home showcase."
+                    }
+                ),
+                400,
+            )
+
+        normalized_ids: List[str] = []
+        seen_ids: Set[str] = set()
+        invalid_ids: List[str] = []
+
+        for raw in raw_ids:
+            normalized_object_id = normalize_object_id_value(raw)
+            if not normalized_object_id:
+                invalid_ids.append(str(raw))
+                continue
+            stringified_id = str(normalized_object_id)
+            if stringified_id in seen_ids:
+                continue
+            seen_ids.add(stringified_id)
+            normalized_ids.append(stringified_id)
+
+        if invalid_ids:
+            return (
+                jsonify(
+                    {
+                        "message": "One or more product identifiers were invalid.",
+                        "invalid_ids": invalid_ids,
+                    }
+                ),
+                400,
+            )
+
+        if len(normalized_ids) != FEATURED_SHOWCASE_LIMIT:
+            return (
+                jsonify(
+                    {
+                        "message": f"Select exactly {FEATURED_SHOWCASE_LIMIT} products for the hero showcase.",
+                        "limit": FEATURED_SHOWCASE_LIMIT,
+                    }
+                ),
+                400,
+            )
+
+        object_ids = [ObjectId(string_id) for string_id in normalized_ids]
+        fetched_docs = list(db.products.find({"_id": {"$in": object_ids}}))
+        found_map = {str(document["_id"]): document for document in fetched_docs}
+        missing_ids = [
+            string_id for string_id in normalized_ids if string_id not in found_map
+        ]
+
+        if missing_ids:
+            return (
+                jsonify(
+                    {
+                        "message": "Some selected products could not be found.",
+                        "missing_ids": missing_ids,
+                    }
+                ),
+                404,
+            )
+
+        featured_selection_collection.update_one(
+            {"_id": FEATURED_SELECTION_ID},
+            {
+                "$set": {
+                    "product_ids": normalized_ids,
+                    "updated_at": datetime.utcnow(),
+                    "updated_by": current_user.get("_id") if current_user else None,
+                    "updated_by_email": normalize_email(
+                        current_user.get("email") if current_user else ""
+                    ),
+                }
+            },
+            upsert=True,
+        )
+
+        product_docs, requested_ids, source = resolve_featured_product_documents()
+        user_names, category_map = build_product_serialization_context(product_docs)
+        products = [
+            serialize_product(
+                document, user_names=user_names, category_map=category_map
+            )
+            for document in product_docs
+        ]
+
+        return jsonify(
+            {
+                "message": "Home showcase updated successfully.",
+                "products": products,
+                "requested_ids": requested_ids,
+                "source": source,
+                "limit": FEATURED_SHOWCASE_LIMIT,
+            }
+        )
 
     @app.route("/api/products/<product_id>", methods=["GET"])
     def get_product(product_id: str):
