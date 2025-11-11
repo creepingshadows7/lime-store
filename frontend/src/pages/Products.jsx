@@ -112,6 +112,7 @@ const Products = () => {
   const [categoriesStatus, setCategoriesStatus] = useState("idle");
   const [categoriesError, setCategoriesError] = useState("");
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedFormCategoryIds, setSelectedFormCategoryIds] = useState([]);
   const [draftFormCategories, setDraftFormCategories] = useState([]);
   const [isCategoryFormOpen, setIsCategoryFormOpen] = useState(false);
@@ -184,15 +185,49 @@ const Products = () => {
   }, [products]);
 
   const filteredProducts = useMemo(() => {
-    if (selectedCategoryFilter === "all") {
-      return products;
-    }
-    return products.filter(
-      (product) =>
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    const matchesCategory = (product) => {
+      if (selectedCategoryFilter === "all") {
+        return true;
+      }
+      return (
         Array.isArray(product.category_ids) &&
         product.category_ids.includes(selectedCategoryFilter)
+      );
+    };
+
+    const matchesQuery = (product) => {
+      if (!normalizedQuery) {
+        return true;
+      }
+      const searchableFields = [
+        product?.name,
+        product?.description,
+        product?.created_by_name,
+        product?.created_by,
+        ...(Array.isArray(product?.variations)
+          ? product.variations.map((variation) => variation?.name)
+          : []),
+        ...(Array.isArray(product?.categories)
+          ? product.categories.map((category) => category?.name)
+          : []),
+      ];
+
+      return searchableFields.some(
+        (field) =>
+          typeof field === "string" &&
+          field.trim().toLowerCase().includes(normalizedQuery)
+      );
+    };
+
+    return products.filter(
+      (product) => matchesCategory(product) && matchesQuery(product)
     );
-  }, [products, selectedCategoryFilter]);
+  }, [products, selectedCategoryFilter, searchQuery]);
+
+  const trimmedSearchQuery = searchQuery.trim();
+  const hasSearchQuery = trimmedSearchQuery.length > 0;
 
   const normalizedEmail = profile?.email
     ? profile.email.trim().toLowerCase()
@@ -354,6 +389,21 @@ const Products = () => {
 
   const handleSelectCategoryFilter = (categoryId) => {
     setSelectedCategoryFilter(categoryId);
+  };
+
+  const handleSearchChange = (event) => {
+    setSearchQuery(event.target.value);
+  };
+
+  const handleClearSearch = () => {
+    setSearchQuery("");
+  };
+
+  const handleSearchKeyDown = (event) => {
+    if (event.key === "Escape" && searchQuery) {
+      event.preventDefault();
+      setSearchQuery("");
+    }
   };
 
   const handleToggleCategoryForm = () => {
@@ -1073,15 +1123,80 @@ const Products = () => {
               galleries, tasting notes, and publishing history.
             </p>
           </header>
+          <div
+            className="product-search"
+            role="search"
+            aria-label="Search products"
+          >
+            <label className="product-search__label" htmlFor="product-search-input">
+              Search the collection
+            </label>
+            <div className="product-search__field">
+              <span className="product-search__icon" aria-hidden="true">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                >
+                  <circle cx="11" cy="11" r="6" />
+                  <line x1="16.5" y1="16.5" x2="21" y2="21" />
+                </svg>
+              </span>
+              <input
+                id="product-search-input"
+                type="search"
+                name="productSearch"
+                className="product-search__input"
+                placeholder="Search by name, flavor, or artisan"
+                autoComplete="off"
+                spellCheck={false}
+                enterKeyHint="search"
+                value={searchQuery}
+                onChange={handleSearchChange}
+                onKeyDown={handleSearchKeyDown}
+              />
+              {hasSearchQuery && (
+                <button
+                  type="button"
+                  className="product-search__clear"
+                  onClick={handleClearSearch}
+                  aria-label="Clear search"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="product-search__meta">
+              <span>
+                {hasSearchQuery
+                  ? `Showing ${filteredProducts.length} ${
+                      filteredProducts.length === 1 ? "item" : "items"
+                    } for "${trimmedSearchQuery}"`
+                  : `Showing ${filteredProducts.length} ${
+                      filteredProducts.length === 1 ? "item" : "items"
+                    } from the atelier`}
+              </span>
+              <span className="product-search__hint">
+                {hasSearchQuery
+                  ? "Press Esc or Clear to reset your search."
+                  : "Tip: Try terms like mousse, sorbet, or maker names."}
+              </span>
+            </div>
+          </div>
           {filteredProducts.length === 0 ? (
             <p className="page__status">
-              {selectedCategoryFilter === "all"
+              {hasSearchQuery
+                ? "No creations match that search. Try another flavor, ingredient, or reset your filters."
+                : selectedCategoryFilter === "all"
                 ? "No creations have been plated yet. Be the first to add one!"
                 : "Nothing has been curated for this category yet. Try another filter or add a product."}
             </p>
           ) : (
             <div className="product-grid product-grid--elevated">
-            {filteredProducts.map((product) => {
+              {filteredProducts.map((product) => {
               const pricing = getPricingDetails(product.price, product.discount_price);
               const rawPublisherName =
                 typeof product.created_by_name === "string"

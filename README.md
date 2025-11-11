@@ -1,1 +1,1 @@
-v1.9 Check out and delivery address basic configuration is complete
+v1.9.1 Search bar in products tab
