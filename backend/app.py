@@ -140,6 +140,7 @@ def create_app() -> Flask:
     MAX_PRODUCT_VARIATIONS = 25
     FEATURED_SHOWCASE_LIMIT = 4
     FEATURED_SELECTION_ID = "home_showcase_selection"
+    SHOWCASE_LABEL_MAX_LENGTH = 60
 
     def normalize_email(value: Optional[str]) -> str:
         return str(value or "").strip().lower()
@@ -712,6 +713,48 @@ def create_app() -> Flask:
         category_documents = db.categories.find({"_id": {"$in": normalized_ids}})
         return {document["_id"]: document for document in category_documents}
 
+    def normalize_showcase_label_value(value) -> str:
+        if not isinstance(value, str):
+            return ""
+        trimmed = value.strip()
+        if not trimmed:
+            return ""
+        return trimmed[:SHOWCASE_LABEL_MAX_LENGTH]
+
+    def normalize_showcase_label_overrides(overrides, allowed_ids=None):
+        if not isinstance(overrides, dict):
+            return {}
+
+        normalized: Dict[str, Dict[str, str]] = {}
+        allowed_set = set(allowed_ids or [])
+
+        for raw_id, payload in overrides.items():
+            product_id = str(raw_id or "").strip()
+            if not product_id:
+                continue
+            if allowed_set and product_id not in allowed_set:
+                continue
+            if not isinstance(payload, dict):
+                continue
+
+            badge_label = normalize_showcase_label_value(
+                payload.get("badge_label") or payload.get("badgeLabel")
+            )
+            provenance_label = normalize_showcase_label_value(
+                payload.get("provenance_label") or payload.get("provenanceLabel")
+            )
+
+            if not badge_label and not provenance_label:
+                continue
+
+            normalized[product_id] = {}
+            if badge_label:
+                normalized[product_id]["badge_label"] = badge_label
+            if provenance_label:
+                normalized[product_id]["provenance_label"] = provenance_label
+
+        return normalized
+
     def serialize_category(category_document, product_counts=None):
         if not category_document:
             return {}
@@ -987,6 +1030,7 @@ def create_app() -> Flask:
         curated_ids: List[str] = []
         curated_docs: List[Dict] = []
         normalized_object_ids: List[ObjectId] = []
+        curated_label_overrides: Dict[str, Dict[str, str]] = {}
 
         if selection_document:
             raw_ids = selection_document.get("product_ids") or []
@@ -1011,6 +1055,9 @@ def create_app() -> Flask:
                     for string_id in curated_ids
                     if string_id in doc_map
                 ]
+            curated_label_overrides = normalize_showcase_label_overrides(
+                selection_document.get("label_overrides"), curated_ids
+            )
 
         source = "curated" if curated_docs else "recent"
         used_ids = {document["_id"] for document in curated_docs}
@@ -1029,7 +1076,7 @@ def create_app() -> Flask:
             elif fallback_docs and not curated_ids:
                 source = "recent"
 
-        return curated_docs[:limit], curated_ids, source
+        return curated_docs[:limit], curated_ids, source, curated_label_overrides
 
     def safe_float(value, default=0.0):
         try:
@@ -1800,7 +1847,12 @@ def create_app() -> Flask:
 
     @app.route("/api/featured-products", methods=["GET"])
     def get_featured_products():
-        product_docs, requested_ids, source = resolve_featured_product_documents()
+        (
+            product_docs,
+            requested_ids,
+            source,
+            label_overrides,
+        ) = resolve_featured_product_documents()
 
         if not product_docs:
             return jsonify(
@@ -1809,6 +1861,7 @@ def create_app() -> Flask:
                     "requested_ids": requested_ids,
                     "source": source,
                     "limit": FEATURED_SHOWCASE_LIMIT,
+                    "label_overrides": label_overrides,
                 }
             )
 
@@ -1826,6 +1879,7 @@ def create_app() -> Flask:
                 "requested_ids": requested_ids,
                 "source": source,
                 "limit": FEATURED_SHOWCASE_LIMIT,
+                "label_overrides": label_overrides,
             }
         )
 
@@ -1838,6 +1892,7 @@ def create_app() -> Flask:
 
         payload = request.get_json(silent=True) or {}
         raw_ids = payload.get("product_ids")
+        raw_label_overrides = payload.get("label_overrides") or {}
 
         if not isinstance(raw_ids, list):
             return (
@@ -1886,6 +1941,10 @@ def create_app() -> Flask:
                 400,
             )
 
+        label_overrides = normalize_showcase_label_overrides(
+            raw_label_overrides, normalized_ids
+        )
+
         object_ids = [ObjectId(string_id) for string_id in normalized_ids]
         fetched_docs = list(db.products.find({"_id": {"$in": object_ids}}))
         found_map = {str(document["_id"]): document for document in fetched_docs}
@@ -1909,6 +1968,7 @@ def create_app() -> Flask:
             {
                 "$set": {
                     "product_ids": normalized_ids,
+                    "label_overrides": label_overrides,
                     "updated_at": datetime.utcnow(),
                     "updated_by": current_user.get("_id") if current_user else None,
                     "updated_by_email": normalize_email(
@@ -1919,7 +1979,12 @@ def create_app() -> Flask:
             upsert=True,
         )
 
-        product_docs, requested_ids, source = resolve_featured_product_documents()
+        (
+            product_docs,
+            requested_ids,
+            source,
+            selection_label_overrides,
+        ) = resolve_featured_product_documents()
         user_names, category_map = build_product_serialization_context(product_docs)
         products = [
             serialize_product(
@@ -1935,6 +2000,7 @@ def create_app() -> Flask:
                 "requested_ids": requested_ids,
                 "source": source,
                 "limit": FEATURED_SHOWCASE_LIMIT,
+                "label_overrides": selection_label_overrides,
             }
         )
 

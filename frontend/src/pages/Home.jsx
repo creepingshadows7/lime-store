@@ -43,6 +43,115 @@ const deriveBadgeLabel = (product) =>
   normalizeString(product?.collection) ||
   "Signature";
 
+const deriveProvenanceLabel = (product) => {
+  const categoryName =
+    (Array.isArray(product?.categories)
+      ? product.categories
+          .map((category) => {
+            if (typeof category === "string") {
+              return category.trim();
+            }
+            if (
+              category &&
+              typeof category.name === "string" &&
+              category.name.trim()
+            ) {
+              return category.name.trim();
+            }
+            return "";
+          })
+          .find(Boolean)
+      : "") || "";
+
+  return (
+    normalizeString(product?.origin) ||
+    normalizeString(product?.region) ||
+    categoryName ||
+    "Limited release"
+  );
+};
+
+const SHOWCASE_LABEL_MAX_LENGTH = 48;
+
+const normalizeLabelOverrideValue = (value) => {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim().slice(0, SHOWCASE_LABEL_MAX_LENGTH);
+};
+
+const mapIncomingLabelOverrides = (overrides, allowedIds) => {
+  if (!overrides || typeof overrides !== "object") {
+    return {};
+  }
+  const allowedSet = Array.isArray(allowedIds)
+    ? new Set(
+        allowedIds
+          .map((id) => (typeof id === "string" ? id.trim() : ""))
+          .filter(Boolean)
+      )
+    : null;
+
+  return Object.entries(overrides).reduce((acc, [rawId, entry]) => {
+    const productId = typeof rawId === "string" ? rawId.trim() : "";
+    if (!productId) {
+      return acc;
+    }
+    if (allowedSet && !allowedSet.has(productId)) {
+      return acc;
+    }
+    if (!entry || typeof entry !== "object") {
+      return acc;
+    }
+    const badgeLabel = normalizeLabelOverrideValue(
+      entry.badge_label ?? entry.badgeLabel
+    );
+    const provenanceLabel = normalizeLabelOverrideValue(
+      entry.provenance_label ?? entry.provenanceLabel
+    );
+    if (!badgeLabel && !provenanceLabel) {
+      return acc;
+    }
+    acc[productId] = {
+      ...(badgeLabel ? { badgeLabel } : {}),
+      ...(provenanceLabel ? { provenanceLabel } : {}),
+    };
+    return acc;
+  }, {});
+};
+
+const buildLabelOverridePayload = (selectedIds, overrides) => {
+  if (!Array.isArray(selectedIds) || selectedIds.length === 0) {
+    return {};
+  }
+  const payload = {};
+  selectedIds.forEach((rawId) => {
+    const productId = normalizeString(rawId);
+    if (!productId) {
+      return;
+    }
+    const entry = overrides?.[productId];
+    if (!entry) {
+      return;
+    }
+    const badgeLabel = normalizeLabelOverrideValue(entry.badgeLabel);
+    const provenanceLabel = normalizeLabelOverrideValue(
+      entry.provenanceLabel
+    );
+    if (!badgeLabel && !provenanceLabel) {
+      return;
+    }
+    payload[productId] = {};
+    if (badgeLabel) {
+      payload[productId].badge_label = badgeLabel;
+    }
+    if (provenanceLabel) {
+      payload[productId].provenance_label = provenanceLabel;
+    }
+  });
+  return payload;
+};
+
 const deriveProductId = (product, fallbackIndex) => {
   const primaryId =
     product?.id ?? product?._id ?? product?.slug ?? product?.productId;
@@ -85,6 +194,7 @@ const Home = () => {
   const [showcaseFeedback, setShowcaseFeedback] = useState("");
   const [showcaseFeedbackTone, setShowcaseFeedbackTone] = useState("info");
   const [isSavingShowcase, setIsSavingShowcase] = useState(false);
+  const [labelOverrides, setLabelOverrides] = useState({});
 
   const normalizedEmail = profile?.email
     ? profile.email.trim().toLowerCase()
@@ -121,8 +231,15 @@ const Home = () => {
           .filter(Boolean);
         setSelectedFeaturedIds(derivedIds.slice(0, FEATURED_SHOWCASE_LIMIT));
       }
+      setLabelOverrides(
+        mapIncomingLabelOverrides(
+          data?.label_overrides,
+          requestedIds.length ? requestedIds : []
+        )
+      );
     } catch (error) {
       setFeatured([]);
+      setLabelOverrides({});
       if (isAdmin) {
         const message =
           error.response?.data?.message ??
@@ -135,6 +252,25 @@ const Home = () => {
   useEffect(() => {
     fetchFeaturedProducts();
   }, [fetchFeaturedProducts]);
+
+  useEffect(() => {
+    setLabelOverrides((prev) => {
+      if (!prev || typeof prev !== "object") {
+        return {};
+      }
+      const allowed = new Set(selectedFeaturedIds);
+      let changed = false;
+      const next = {};
+      Object.entries(prev).forEach(([productId, entry]) => {
+        if (allowed.has(productId)) {
+          next[productId] = entry;
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [selectedFeaturedIds]);
 
   useEffect(() => {
     if (!isAdmin || !editorOpen) {
@@ -214,25 +350,24 @@ const Home = () => {
         const productName =
           normalizeString(product?.name) || "Lime Atelier Exclusive";
         const description = pickDescription(product);
-        const badge = deriveBadgeLabel(product);
-        const imageCount = imageUrls.length;
-        const productId =
-          normalizeString(product?.id) || deriveProductId(product, index);
-        const pricing = getPricingDetails(product?.price, product?.discount_price);
+        const fallbackBadge = deriveBadgeLabel(product);
+        const fallbackProvenance = deriveProvenanceLabel(product);
+        const canonicalProductId =
+          resolveProductId(product) ||
+          normalizeString(product?.id) ||
+          deriveProductId(product, index);
+        const overridesForProduct =
+          (canonicalProductId && labelOverrides[canonicalProductId]) || {};
+        const badge =
+          normalizeString(overridesForProduct.badgeLabel) || fallbackBadge;
         const provenance =
-          normalizeString(product?.origin) ||
-          normalizeString(product?.region) ||
-          (Array.isArray(product?.categories)
-            ? product.categories
-                .map((category) =>
-                  typeof category === "string" ? category.trim() : ""
-                )
-                .filter(Boolean)[0]
-            : "") ||
-          "Limited release";
+          normalizeString(overridesForProduct.provenanceLabel) ||
+          fallbackProvenance;
+        const imageCount = imageUrls.length;
+        const pricing = getPricingDetails(product?.price, product?.discount_price);
 
         return {
-          id: productId,
+          id: canonicalProductId,
           productName,
           pricing,
           description,
@@ -242,7 +377,7 @@ const Home = () => {
           imageCount,
         };
       }),
-    [featured]
+    [featured, labelOverrides]
   );
 
   const handleToggleEditor = () => {
@@ -274,6 +409,54 @@ const Home = () => {
     });
   };
 
+  const handleLabelOverrideChange = (productId, field, rawValue) => {
+    if (
+      !productId ||
+      (field !== "badgeLabel" && field !== "provenanceLabel")
+    ) {
+      return;
+    }
+    const limitedValue =
+      typeof rawValue === "string"
+        ? rawValue.slice(0, SHOWCASE_LABEL_MAX_LENGTH)
+        : "";
+
+    setLabelOverrides((prev) => {
+      const previousEntry = prev[productId] || {};
+      const nextEntry = { ...previousEntry };
+      if (!limitedValue.trim()) {
+        if (typeof previousEntry[field] === "undefined") {
+          return prev;
+        }
+        delete nextEntry[field];
+      } else {
+        if (previousEntry[field] === limitedValue) {
+          return prev;
+        }
+        nextEntry[field] = limitedValue;
+      }
+
+      const hasBadge =
+        typeof nextEntry.badgeLabel === "string" && nextEntry.badgeLabel.length > 0;
+      const hasProvenance =
+        typeof nextEntry.provenanceLabel === "string" &&
+        nextEntry.provenanceLabel.length > 0;
+
+      if (!hasBadge && !hasProvenance) {
+        if (!prev[productId]) {
+          return prev;
+        }
+        const { [productId]: _removed, ...rest } = prev;
+        return rest;
+      }
+
+      return {
+        ...prev,
+        [productId]: nextEntry,
+      };
+    });
+  };
+
   const handleRemoveFeaturedSlot = (slotIndex) => {
     setSelectedFeaturedIds((current) =>
       current.filter((_, index) => index !== slotIndex)
@@ -294,7 +477,13 @@ const Home = () => {
     setShowcaseMessage("");
 
     try {
-      const payload = { product_ids: selectedFeaturedIds };
+      const payload = {
+        product_ids: selectedFeaturedIds,
+        label_overrides: buildLabelOverridePayload(
+          selectedFeaturedIds,
+          labelOverrides
+        ),
+      };
       await apiClient.put("/api/featured-products", payload);
       await fetchFeaturedProducts();
       setShowcaseMessage("Home showcase updated successfully.", "success");
@@ -478,55 +667,101 @@ const Home = () => {
                 const slotPricing = product
                   ? getPricingDetails(product.price, product.discount_price)
                   : null;
+                const slotOverrides =
+                  (product && productId && labelOverrides[productId]) || {};
+                const fallbackBadgeLabel = product
+                  ? deriveBadgeLabel(product)
+                  : "Signature";
+                const fallbackProvenanceLabel = product
+                  ? deriveProvenanceLabel(product)
+                  : "Limited release";
 
                 return (
                   <div key={productId} className="showcase-slot">
                     <div className="showcase-slot__label">Spot {index + 1}</div>
                     {product ? (
-                      <div className="showcase-slot__content">
-                        {coverImage ? (
-                          <img
-                            src={coverImage}
-                            alt=""
-                            className="showcase-slot__image"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <div className="showcase-slot__image showcase-slot__image--placeholder">
-                            Lime
-                          </div>
-                      )}
-                      <div className="showcase-slot__details">
-                        <p className="showcase-slot__name">{product.name}</p>
-                        {slotPricing && (
-                          <div className="price-stack price-stack--compact">
-                            <span className="price-stack__current">
-                              {slotPricing.currentLabel}
-                            </span>
-                            {slotPricing.hasDiscount && (
-                              <>
-                                <span className="price-stack__original">
-                                  {slotPricing.baseLabel}
+                      <>
+                        <div className="showcase-slot__content">
+                          {coverImage ? (
+                            <img
+                              src={coverImage}
+                              alt=""
+                              className="showcase-slot__image"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="showcase-slot__image showcase-slot__image--placeholder">
+                              Lime
+                            </div>
+                          )}
+                          <div className="showcase-slot__details">
+                            <p className="showcase-slot__name">{product.name}</p>
+                            {slotPricing && (
+                              <div className="price-stack price-stack--compact">
+                                <span className="price-stack__current">
+                                  {slotPricing.currentLabel}
                                 </span>
-                                {slotPricing.savingsPercent && (
-                                  <span className="price-stack__badge">
-                                    Save {slotPricing.savingsPercent}%
-                                  </span>
+                                {slotPricing.hasDiscount && (
+                                  <>
+                                    <span className="price-stack__original">
+                                      {slotPricing.baseLabel}
+                                    </span>
+                                    {slotPricing.savingsPercent && (
+                                      <span className="price-stack__badge">
+                                        Save {slotPricing.savingsPercent}%
+                                      </span>
+                                    )}
+                                  </>
                                 )}
-                              </>
+                              </div>
                             )}
                           </div>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                          className="showcase-slot__remove"
-                          onClick={() => handleRemoveFeaturedSlot(index)}
-                          aria-label={`Remove ${product.name} from slot ${index + 1}`}
-                        >
-                          Remove
-                        </button>
-                      </div>
+                          <button
+                            type="button"
+                            className="showcase-slot__remove"
+                            onClick={() => handleRemoveFeaturedSlot(index)}
+                            aria-label={`Remove ${product.name} from slot ${index + 1}`}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                        <div className="showcase-slot__form">
+                          <label className="showcase-slot__field">
+                            <span>Badge label</span>
+                            <input
+                              type="text"
+                              className="showcase-slot__input"
+                              maxLength={SHOWCASE_LABEL_MAX_LENGTH}
+                              value={slotOverrides.badgeLabel ?? ""}
+                              placeholder={fallbackBadgeLabel}
+                              onChange={(event) =>
+                                handleLabelOverrideChange(
+                                  productId,
+                                  "badgeLabel",
+                                  event.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="showcase-slot__field">
+                            <span>Origin label</span>
+                            <input
+                              type="text"
+                              className="showcase-slot__input"
+                              maxLength={SHOWCASE_LABEL_MAX_LENGTH}
+                              value={slotOverrides.provenanceLabel ?? ""}
+                              placeholder={fallbackProvenanceLabel}
+                              onChange={(event) =>
+                                handleLabelOverrideChange(
+                                  productId,
+                                  "provenanceLabel",
+                                  event.target.value
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+                      </>
                     ) : (
                       <p className="showcase-slot__empty">
                         Choose a product below to fill this position.
