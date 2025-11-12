@@ -650,7 +650,22 @@ const Home = () => {
                 onClick={handleToggleEditor}
                 aria-label="Close showcase editor"
               >
-                ×
+                <span className="sr-only">Close showcase editor</span>
+                <svg
+                  aria-hidden="true"
+                  focusable="false"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.75"
+                    strokeLinecap="round"
+                    d="M6 6l12 12M18 6L6 18"
+                  />
+                </svg>
               </button>
             </div>
           </div>
@@ -888,3 +903,4 @@ const Home = () => {
 };
 
 export default Home;
+

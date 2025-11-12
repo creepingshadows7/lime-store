@@ -1,1 +1,1 @@
-v1.9.2 Home page selected item more editing info, bug fixes, UI changes
+v1.9.3 Bug fixes and improvements
