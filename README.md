@@ -1,1 +1,1 @@
-v1.9.4 User Password change updates, now requires old password
+v1.9.5 Password verification email bugs and fixes

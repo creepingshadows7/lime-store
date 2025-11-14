@@ -239,10 +239,10 @@ def create_app() -> Flask:
         <tr>
           <td style="padding:48px 42px;background-image:{gradient_overlay};background-size:cover;">
             <p style="margin:0 0 12px 0;text-transform:uppercase;letter-spacing:0.4em;font-size:12px;color:{colors['accent_mint']};">Lime Shop</p>
-            <h1 style="margin:0 0 14px 0;font-size:26px;line-height:1.25;color:{colors['text_primary']};">Ignite your Lime Shop account</h1>
+            <h1 style="margin:0 0 14px 0;font-size:26px;line-height:1.25;color:{colors['text_primary']};">Verify your Lime Shop email address</h1>
             <p style="margin:0 0 28px 0;font-size:15px;line-height:1.75;color:{colors['text_secondary']};">
-              We pair handcrafted citrus goods with neon energy. Enter the code below to prove this inbox belongs to you
-              and finish creating your account. The code is valid for {otp_expiration_minutes} minutes.
+              Enter the code below to verify your email address and continue your shopping experience.
+              The code is valid for {otp_expiration_minutes} minutes.
             </p>
             <div style="background:{colors['glass_light']};border:1px solid {colors['glass_border']};border-radius:26px;padding:28px;text-align:center;box-shadow:0 25px 65px rgba(3,7,17,0.65);">
               <p style="margin:0 0 16px 0;text-transform:uppercase;letter-spacing:0.3em;font-size:12px;color:{colors['text_muted']};">Verification code</p>
@@ -263,7 +263,7 @@ def create_app() -> Flask:
               Didn&rsquo;t expect this email? You can safely ignore it—your account stays locked until the correct code is entered.
             </p>
             <p style="margin:0;font-size:13px;color:{colors['text_muted']};">
-              With zest,<br />The Lime Shop Team
+              Regards,<br />The Lime Shop Team
             </p>
           </td>
         </tr>
