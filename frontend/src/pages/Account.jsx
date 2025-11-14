@@ -55,6 +55,8 @@ const Account = () => {
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [status, setStatus] = useState("idle");
   const [feedback, setFeedback] = useState("");
+  const [contactStatus, setContactStatus] = useState("idle");
+  const [contactFeedback, setContactFeedback] = useState("");
   const [passwordStatus, setPasswordStatus] = useState("idle");
   const [passwordFeedback, setPasswordFeedback] = useState("");
   const [currentAvatarUrl, setCurrentAvatarUrl] = useState(
@@ -91,6 +93,10 @@ const Account = () => {
   useEffect(() => {
     if (!isAuthenticated) {
       setIsLoadingProfile(false);
+      setStatus("idle");
+      setFeedback("");
+      setContactStatus("idle");
+      setContactFeedback("");
       setPasswordValues(buildPasswordFormState());
       setPasswordStatus("idle");
       setPasswordFeedback("");
@@ -342,6 +348,19 @@ const Account = () => {
   const handleChange = (event) => {
     const { name, value } = event.target;
     setFormValues((prev) => ({ ...prev, [name]: value }));
+    if (name === "name" || name === "email" || name === "phone") {
+      setContactStatus("idle");
+      setContactFeedback("");
+    } else if (
+      name === "addressCountry" ||
+      name === "addressPostcode" ||
+      name === "addressCity" ||
+      name === "addressLine1" ||
+      name === "addressLine2"
+    ) {
+      setStatus("idle");
+      setFeedback("");
+    }
   };
 
   const handlePasswordChange = (event) => {
@@ -465,16 +484,44 @@ const Account = () => {
     }
   };
 
-  const handleSubmit = async (event) => {
+  const handleContactSubmit = async (event) => {
     event.preventDefault();
-    setStatus("loading");
-    setFeedback("");
+    setContactStatus("loading");
+    setContactFeedback("");
 
     try {
       const payload = {
         name: formValues.name.trim(),
         email: formValues.email.trim(),
         phone: formValues.phone.trim(),
+      };
+
+      const { data } = await apiClient.put("/api/account", payload);
+      login(data.access_token, data.user);
+
+      setFormValues(buildFormValuesFromUser(data.user ?? {}));
+      setCurrentAvatarUrl(data.user?.avatar_url ?? currentAvatarUrl);
+
+      setContactStatus("success");
+      setContactFeedback(
+        data.message ?? "Contact information updated successfully."
+      );
+    } catch (error) {
+      const message =
+        error.response?.data?.message ??
+        "We couldn't update your contact information. Please try again.";
+      setContactStatus("error");
+      setContactFeedback(message);
+    }
+  };
+
+  const handleAddressSubmit = async (event) => {
+    event.preventDefault();
+    setStatus("loading");
+    setFeedback("");
+
+    try {
+      const payload = {
         address: mapFormToAddressPayload(formValues),
       };
 
@@ -662,7 +709,11 @@ const Account = () => {
                 )}
               </div>
             </div>
-            <form className="account-form" onSubmit={handleSubmit}>
+
+            <form
+              className="account-form account-form--contact"
+              onSubmit={handleContactSubmit}
+            >
               <div className="input-group">
                 <span>Full Name</span>
                 <input
@@ -700,6 +751,35 @@ const Account = () => {
                   autoComplete="tel"
                 />
               </div>
+              <div className="account-actions">
+                <button
+                  type="submit"
+                  className="button button--gradient"
+                  disabled={contactStatus === "loading"}
+                >
+                  {contactStatus === "loading"
+                    ? "Saving..."
+                    : "Save Contact Details"}
+                </button>
+              </div>
+              {contactFeedback && (
+                <p
+                  className={`form-feedback${
+                    contactStatus === "error"
+                      ? " form-feedback--error"
+                      : contactStatus === "success"
+                      ? " form-feedback--success"
+                      : ""
+                  }`}
+                >
+                  {contactFeedback}
+                </p>
+              )}
+            </form>
+            <form
+              className="account-form account-form--address"
+              onSubmit={handleAddressSubmit}
+            >
               <div className="account-address">
                 <div className="account-address__header">
                   <div>
@@ -769,7 +849,7 @@ const Account = () => {
                   </label>
                 </div>
                 <p className="account-address__note">
-                  Leave fields blank if you prefer to share delivery details later—we’ll
+                  Leave fields blank if you prefer to share delivery details later - we'll
                   remind you at checkout.
                 </p>
               </div>
@@ -779,7 +859,7 @@ const Account = () => {
                   className="button button--gradient"
                   disabled={status === "loading"}
                 >
-                  {status === "loading" ? "Saving..." : "Save Changes"}
+                  {status === "loading" ? "Saving..." : "Save Address"}
                 </button>
               </div>
               {feedback && (

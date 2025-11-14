@@ -1,1 +1,1 @@
-v1.9.5 Password verification email bugs and fixes
+v1.9.6 UI changes in profile page and bug fixes
