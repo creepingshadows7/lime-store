@@ -1683,6 +1683,8 @@ def create_app() -> Flask:
         desired_name = str(payload.get("name", user.get("name", ""))).strip()
         desired_phone = str(payload.get("phone", user.get("phone", ""))).strip()
         new_password = str(payload.get("password", "")).strip()
+        current_password = str(payload.get("current_password", "")).strip()
+        confirm_password = str(payload.get("confirm_password", "")).strip()
         address_provided = "address" in payload
         normalized_address = (
             normalize_address_payload(payload.get("address"))
@@ -1713,6 +1715,27 @@ def create_app() -> Flask:
                 unset_ops["phone"] = ""
 
         if new_password:
+            if not current_password:
+                return (
+                    jsonify(
+                        {"message": "Current password is required to set a new password."}
+                    ),
+                    400,
+                )
+
+            if new_password != confirm_password:
+                return (
+                    jsonify({"message": "New password confirmation does not match."}),
+                    400,
+                )
+
+            stored_password = user.get("password") or b""
+            if isinstance(stored_password, str):
+                stored_password = stored_password.encode("utf-8")
+
+            if not bcrypt.checkpw(current_password.encode("utf-8"), stored_password):
+                return jsonify({"message": "Your current password is incorrect."}), 400
+
             hashed_pw = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt())
             updates["password"] = hashed_pw
 

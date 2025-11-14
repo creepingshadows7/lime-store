@@ -28,11 +28,15 @@ const buildFormValuesFromUser = (user = {}) => ({
   name: typeof user.name === "string" ? user.name : "",
   email: typeof user.email === "string" ? user.email : "",
   phone: typeof user.phone === "string" ? user.phone : "",
-  password: "",
   ...mapAddressToState(user.address ?? {}),
 });
 
-const initialState = buildFormValuesFromUser();
+const initialProfileState = buildFormValuesFromUser();
+const buildPasswordFormState = () => ({
+  currentPassword: "",
+  newPassword: "",
+  confirmPassword: "",
+});
 
 const ORDER_DATE_OPTIONS = {
   year: "numeric",
@@ -44,10 +48,15 @@ const ORDER_DATE_OPTIONS = {
 
 const Account = () => {
   const { isAuthenticated, profile, login } = useAuth();
-  const [formValues, setFormValues] = useState(initialState);
+  const [formValues, setFormValues] = useState(initialProfileState);
+  const [passwordValues, setPasswordValues] = useState(
+    () => buildPasswordFormState()
+  );
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [status, setStatus] = useState("idle");
   const [feedback, setFeedback] = useState("");
+  const [passwordStatus, setPasswordStatus] = useState("idle");
+  const [passwordFeedback, setPasswordFeedback] = useState("");
   const [currentAvatarUrl, setCurrentAvatarUrl] = useState(
     profile?.avatar_url ?? ""
   );
@@ -82,6 +91,9 @@ const Account = () => {
   useEffect(() => {
     if (!isAuthenticated) {
       setIsLoadingProfile(false);
+      setPasswordValues(buildPasswordFormState());
+      setPasswordStatus("idle");
+      setPasswordFeedback("");
       setCurrentAvatarUrl("");
       setAvatarFile(null);
       setAvatarPreview((prev) => {
@@ -126,6 +138,9 @@ const Account = () => {
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
+        setPasswordValues(buildPasswordFormState());
+        setPasswordStatus("idle");
+        setPasswordFeedback("");
         setIsLoadingProfile(false);
       }
     };
@@ -329,6 +344,13 @@ const Account = () => {
     setFormValues((prev) => ({ ...prev, [name]: value }));
   };
 
+  const handlePasswordChange = (event) => {
+    const { name, value } = event.target;
+    setPasswordValues((prev) => ({ ...prev, [name]: value }));
+    setPasswordStatus("idle");
+    setPasswordFeedback("");
+  };
+
   const handleAvatarChange = (event) => {
     const { files } = event.target;
     if (!files || files.length === 0) {
@@ -456,10 +478,6 @@ const Account = () => {
         address: mapFormToAddressPayload(formValues),
       };
 
-      if (formValues.password.trim()) {
-        payload.password = formValues.password.trim();
-      }
-
       const { data } = await apiClient.put("/api/account", payload);
       login(data.access_token, data.user);
 
@@ -474,6 +492,48 @@ const Account = () => {
         "We couldn't update your account. Please try again.";
       setStatus("error");
       setFeedback(message);
+    }
+  };
+
+  const handlePasswordSubmit = async (event) => {
+    event.preventDefault();
+    const currentPassword = passwordValues.currentPassword.trim();
+    const newPassword = passwordValues.newPassword.trim();
+    const confirmPassword = passwordValues.confirmPassword.trim();
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordStatus("error");
+      setPasswordFeedback("Please complete all password fields.");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordStatus("error");
+      setPasswordFeedback("New passwords do not match.");
+      return;
+    }
+
+    setPasswordStatus("loading");
+    setPasswordFeedback("");
+
+    try {
+      const { data } = await apiClient.put("/api/account", {
+        current_password: currentPassword,
+        password: newPassword,
+        confirm_password: confirmPassword,
+      });
+      login(data.access_token, data.user);
+      setPasswordValues(buildPasswordFormState());
+      setPasswordStatus("success");
+      setPasswordFeedback(
+        data.message ?? "Password updated successfully."
+      );
+    } catch (error) {
+      const message =
+        error.response?.data?.message ??
+        "We couldn't update your password. Please try again.";
+      setPasswordStatus("error");
+      setPasswordFeedback(message);
     }
   };
 
@@ -713,18 +773,6 @@ const Account = () => {
                   remind you at checkout.
                 </p>
               </div>
-              <div className="input-group">
-                <span>New Password</span>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  value={formValues.password}
-                  onChange={handleChange}
-                  placeholder="Leave blank to keep current password"
-                  autoComplete="new-password"
-                />
-              </div>
               <div className="account-actions">
                 <button
                   type="submit"
@@ -748,6 +796,84 @@ const Account = () => {
                 </p>
               )}
             </form>
+            <div className="account-password">
+              <div className="account-password__header">
+                <p className="eyebrow eyebrow--muted">Security</p>
+                <h3>Reset Password</h3>
+                <p className="account-address__subtitle">
+                  Update your password in a dedicated space. Enter your current
+                  password, choose a new one, and confirm the change.
+                </p>
+              </div>
+              <form
+                className="account-form account-form--password"
+                onSubmit={handlePasswordSubmit}
+              >
+                <div className="input-group">
+                  <span>Current Password</span>
+                  <input
+                    id="current-password"
+                    name="currentPassword"
+                    type="password"
+                    value={passwordValues.currentPassword}
+                    onChange={handlePasswordChange}
+                    placeholder="Enter your current password"
+                    autoComplete="current-password"
+                    required
+                  />
+                </div>
+                <div className="input-group">
+                  <span>New Password</span>
+                  <input
+                    id="new-password"
+                    name="newPassword"
+                    type="password"
+                    value={passwordValues.newPassword}
+                    onChange={handlePasswordChange}
+                    placeholder="Create a new password"
+                    autoComplete="new-password"
+                    required
+                  />
+                </div>
+                <div className="input-group">
+                  <span>Confirm New Password</span>
+                  <input
+                    id="confirm-password"
+                    name="confirmPassword"
+                    type="password"
+                    value={passwordValues.confirmPassword}
+                    onChange={handlePasswordChange}
+                    placeholder="Type the new password again"
+                    autoComplete="new-password"
+                    required
+                  />
+                </div>
+                <div className="account-actions">
+                  <button
+                    type="submit"
+                    className="button button--outline"
+                    disabled={passwordStatus === "loading"}
+                  >
+                    {passwordStatus === "loading"
+                      ? "Updating..."
+                      : "Update Password"}
+                  </button>
+                </div>
+                {passwordFeedback && (
+                  <p
+                    className={`form-feedback${
+                      passwordStatus === "error"
+                        ? " form-feedback--error"
+                        : passwordStatus === "success"
+                        ? " form-feedback--success"
+                        : ""
+                    }`}
+                  >
+                    {passwordFeedback}
+                  </p>
+                )}
+              </form>
+            </div>
           </>
         )}
       </div>
