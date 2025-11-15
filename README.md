@@ -1,1 +1,1 @@
-v1.9.6 UI changes in profile page and bug fixes
+v1.10 Updated User Email change with new automatic emails and UI changes

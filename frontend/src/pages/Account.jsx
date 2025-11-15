@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import EmailChangeVerification from "../components/EmailChangeVerification";
 import { getProfileInitial } from "../utils/profile";
 import { formatEuro } from "../utils/currency";
 import { formatPublishedDate } from "../utils/dates";
@@ -24,12 +25,21 @@ const mapFormToAddressPayload = (values) => ({
   line2: values.addressLine2.trim(),
 });
 
-const buildFormValuesFromUser = (user = {}) => ({
-  name: typeof user.name === "string" ? user.name : "",
-  email: typeof user.email === "string" ? user.email : "",
-  phone: typeof user.phone === "string" ? user.phone : "",
-  ...mapAddressToState(user.address ?? {}),
-});
+const buildFormValuesFromUser = (user = {}) => {
+  const pendingEmail =
+    typeof user.pending_email === "string" && user.pending_email.trim()
+      ? user.pending_email.trim()
+      : "";
+  const fallbackEmail =
+    typeof user.email === "string" ? user.email.trim() : "";
+
+  return {
+    name: typeof user.name === "string" ? user.name : "",
+    email: pendingEmail || fallbackEmail,
+    phone: typeof user.phone === "string" ? user.phone : "",
+    ...mapAddressToState(user.address ?? {}),
+  };
+};
 
 const initialProfileState = buildFormValuesFromUser();
 const buildPasswordFormState = () => ({
@@ -57,6 +67,10 @@ const Account = () => {
   const [feedback, setFeedback] = useState("");
   const [contactStatus, setContactStatus] = useState("idle");
   const [contactFeedback, setContactFeedback] = useState("");
+  const [pendingEmail, setPendingEmail] = useState(profile?.pending_email ?? "");
+  const [otpValue, setOtpValue] = useState("");
+  const [otpStatus, setOtpStatus] = useState("idle");
+  const [otpFeedback, setOtpFeedback] = useState("");
   const [passwordStatus, setPasswordStatus] = useState("idle");
   const [passwordFeedback, setPasswordFeedback] = useState("");
   const [currentAvatarUrl, setCurrentAvatarUrl] = useState(
@@ -75,6 +89,7 @@ const Account = () => {
     () => ({
       name: profile?.name ?? "",
       email: profile?.email ?? "",
+      pending_email: profile?.pending_email ?? "",
       phone: profile?.phone ?? "",
       avatar_url: profile?.avatar_url ?? "",
       ...mapAddressToState(profile?.address ?? {}),
@@ -97,6 +112,10 @@ const Account = () => {
       setFeedback("");
       setContactStatus("idle");
       setContactFeedback("");
+      setPendingEmail("");
+      setOtpValue("");
+      setOtpStatus("idle");
+      setOtpFeedback("");
       setPasswordValues(buildPasswordFormState());
       setPasswordStatus("idle");
       setPasswordFeedback("");
@@ -124,6 +143,7 @@ const Account = () => {
         const { data } = await apiClient.get("/api/account");
         setFormValues(buildFormValuesFromUser(data.user ?? {}));
         setCurrentAvatarUrl(data.user?.avatar_url ?? "");
+        setPendingEmail(data.user?.pending_email ?? "");
       } catch (error) {
         const fallbackMessage =
           error.response?.data?.message ??
@@ -131,6 +151,7 @@ const Account = () => {
         setFeedback(fallbackMessage);
         setFormValues(buildFormValuesFromUser(profile ?? {}));
         setCurrentAvatarUrl(sanitizedProfile.avatar_url ?? "");
+        setPendingEmail(sanitizedProfile.pending_email ?? "");
       } finally {
         setAvatarFile(null);
         setAvatarPreview((prev) => {
@@ -182,6 +203,16 @@ const Account = () => {
   useEffect(() => {
     fetchOrders();
   }, [fetchOrders]);
+
+  useEffect(() => {
+    const nextPendingEmail = profile?.pending_email ?? "";
+    setPendingEmail(nextPendingEmail);
+    if (!nextPendingEmail) {
+      setOtpValue("");
+      setOtpStatus("idle");
+      setOtpFeedback("");
+    }
+  }, [profile?.pending_email]);
 
   const orderHistory = useMemo(() => {
     return orders.map((order) => {
@@ -351,6 +382,11 @@ const Account = () => {
     if (name === "name" || name === "email" || name === "phone") {
       setContactStatus("idle");
       setContactFeedback("");
+      if (name === "email") {
+        setOtpValue("");
+        setOtpStatus("idle");
+        setOtpFeedback("");
+      }
     } else if (
       name === "addressCountry" ||
       name === "addressPostcode" ||
@@ -368,6 +404,13 @@ const Account = () => {
     setPasswordValues((prev) => ({ ...prev, [name]: value }));
     setPasswordStatus("idle");
     setPasswordFeedback("");
+  };
+
+  const handleOtpChange = (event) => {
+    const digitsOnly = event.target.value.replace(/\D/g, "").slice(0, 6);
+    setOtpValue(digitsOnly);
+    setOtpStatus("idle");
+    setOtpFeedback("");
   };
 
   const handleAvatarChange = (event) => {
@@ -501,6 +544,8 @@ const Account = () => {
 
       setFormValues(buildFormValuesFromUser(data.user ?? {}));
       setCurrentAvatarUrl(data.user?.avatar_url ?? currentAvatarUrl);
+      setPendingEmail(data.user?.pending_email ?? "");
+      setPendingEmail(data.user?.pending_email ?? "");
 
       setContactStatus("success");
       setContactFeedback(
@@ -581,6 +626,43 @@ const Account = () => {
         "We couldn't update your password. Please try again.";
       setPasswordStatus("error");
       setPasswordFeedback(message);
+    }
+  };
+
+  const handleVerifyEmailChange = async (event) => {
+    if (event) {
+      event.preventDefault();
+    }
+    const code = otpValue.trim();
+    if (code.length !== 6) {
+      setOtpStatus("error");
+      setOtpFeedback("Enter the 6-digit code from your email.");
+      return;
+    }
+
+    setOtpStatus("loading");
+    setOtpFeedback("");
+
+    try {
+      const { data } = await apiClient.post(
+        "/api/account/verify-email-change",
+        { otp: code }
+      );
+      login(data.access_token, data.user);
+      setFormValues(buildFormValuesFromUser(data.user ?? {}));
+      setCurrentAvatarUrl(data.user?.avatar_url ?? currentAvatarUrl);
+      setPendingEmail("");
+      setOtpValue("");
+      setOtpStatus("success");
+      setOtpFeedback(data.message ?? "Email successfully updated.");
+      setContactStatus("success");
+      setContactFeedback(data.message ?? "Email successfully updated.");
+    } catch (error) {
+      const message =
+        error.response?.data?.message ??
+        "We couldn't verify that code. Please try again.";
+      setOtpStatus("error");
+      setOtpFeedback(message);
     }
   };
 
@@ -738,7 +820,23 @@ const Account = () => {
                   autoComplete="email"
                   required
                 />
+                {pendingEmail && (
+                  <p className="account-email__note">
+                    Awaiting verification for <strong>{pendingEmail}</strong>.
+                    Enter the code below to finish updating your email.
+                  </p>
+                )}
               </div>
+              {pendingEmail && (
+                <EmailChangeVerification
+                  pendingEmail={pendingEmail}
+                  otpValue={otpValue}
+                  status={otpStatus}
+                  feedback={otpFeedback}
+                  onOtpChange={handleOtpChange}
+                  onVerify={handleVerifyEmailChange}
+                />
+              )}
               <div className="input-group">
                 <span>Phone Number</span>
                 <input

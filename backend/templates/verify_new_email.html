@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Confirm New Email</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background: #02070f;
+        font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont,
+          sans-serif;
+        color: #f7ffe7;
+      }
+      .wrapper {
+        width: 100%;
+        background: linear-gradient(135deg, #02070f, #051327);
+        padding: 32px 0;
+      }
+      .container {
+        width: 100%;
+        max-width: 600px;
+        margin: 0 auto;
+        background: rgba(7, 18, 28, 0.8);
+        border-radius: 28px;
+        border: 1px solid rgba(115, 255, 198, 0.35);
+        padding: 40px;
+        box-sizing: border-box;
+        box-shadow: 0 25px 65px rgba(2, 7, 15, 0.85);
+      }
+      .eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 0.4em;
+        color: rgba(247, 255, 231, 0.6);
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+      h1 {
+        margin: 0 0 16px 0;
+        font-size: 26px;
+      }
+      p {
+        margin: 0 0 16px 0;
+        line-height: 1.7;
+        color: rgba(247, 255, 231, 0.8);
+      }
+      .otp-card {
+        margin: 24px 0;
+        padding: 28px;
+        border-radius: 24px;
+        background: rgba(7, 24, 18, 0.9);
+        border: 1px solid rgba(115, 255, 198, 0.3);
+        text-align: center;
+      }
+      .otp-label {
+        text-transform: uppercase;
+        letter-spacing: 0.3em;
+        font-size: 12px;
+        color: rgba(247, 255, 231, 0.55);
+        margin-bottom: 16px;
+      }
+      .otp-value {
+        display: inline-block;
+        padding: 16px 32px;
+        border-radius: 18px;
+        font-size: 34px;
+        letter-spacing: 0.4em;
+        font-weight: 700;
+        background: linear-gradient(135deg, #aaff82, #73ffc6);
+        color: #041518;
+        box-shadow: 0 12px 35px rgba(115, 255, 198, 0.25);
+      }
+      .footer {
+        margin-top: 32px;
+        font-size: 13px;
+        color: rgba(247, 255, 231, 0.6);
+      }
+      @media (max-width: 640px) {
+        .container {
+          margin: 0 16px;
+          padding: 32px 24px;
+        }
+        .otp-value {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrapper">
+      <div class="container">
+        <p class="eyebrow">Lime Shop</p>
+        <h1>Lime Store New Email Confirmation</h1>
+        <p>
+          {% if recipient_name %}Hi {{ recipient_name }},{% else %}Hi there,{% endif %}
+          we received a request to change the email address on your Lime Shop
+          account. Enter the code below to finish updating your login email.
+        </p>
+        <div class="otp-card">
+          <p class="otp-label">Verification code</p>
+          <span class="otp-value">{{ otp }}</span>
+          <p style="margin-top: 16px; font-size: 13px;">
+            This code expires in {{ expiration_minutes }} minutes.
+          </p>
+        </div>
+        <p>
+          If you didn’t request this change, you can ignore this message—your
+          account email won’t be updated unless the correct code is entered.
+        </p>
+        <div class="footer">
+          <p>Need help? Reply to this email and our team will assist.</p>
+          <p>— The Lime Shop Team</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

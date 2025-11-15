@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlparse
 import bcrypt
 import resend
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_cors import CORS
 from flask_jwt_extended import (
     JWTManager,
@@ -28,9 +28,15 @@ from werkzeug.utils import secure_filename
 
 load_dotenv()
 
-_resend_api_key = (os.getenv("RESEND_API_KEY") or "").strip()
-if _resend_api_key:
-    resend.api_key = _resend_api_key
+_legacy_resend_api_key = (os.getenv("RESEND_API_KEY") or "").strip()
+_resend_new_user_api_key = (
+    os.getenv("RESEND_NEW_USER_EMAIL_VERIFICATION_API_KEY") or _legacy_resend_api_key
+).strip()
+_resend_verify_new_email_api_key = (
+    os.getenv("RESEND_VERIFY_NEW_EMAIL_API_KEY") or ""
+).strip()
+if _resend_new_user_api_key:
+    resend.api_key = _resend_new_user_api_key
 
 _configured_admin_email = os.getenv(
     "DEFAULT_ADMIN_EMAIL", "mihailtsvetanov7@gmail.com"
@@ -94,6 +100,11 @@ def create_app() -> Flask:
         or "verification@limeshop.store"
     )
     otp_email_subject = "Lime Shop • Verify your email"
+    email_change_sender = "verification@limeshop.store"
+    email_change_subject = "Lime Store New Email Confirmation"
+    email_change_otp_expiration_minutes = int(
+        os.getenv("EMAIL_CHANGE_OTP_EXPIRATION_MINUTES", "10")
+    )
     max_failed_otp_attempts = 5
     email_verification_collection = db.email_verification_tokens
 
@@ -272,11 +283,26 @@ def create_app() -> Flask:
   </body>
 </html>"""
 
-    def send_verification_email(recipient_email: str, otp: str):
-        configured_api_key = getattr(resend, "api_key", None) or _resend_api_key
+    def send_email_via_resend(payload: Dict[str, object], api_key: str):
+        configured_api_key = (api_key or "").strip()
         if not configured_api_key:
-            return False, "RESEND_API_KEY is not configured."
+            return False, "Resend API key is not configured."
 
+        previous_api_key = getattr(resend, "api_key", None)
+        resend.api_key = configured_api_key
+        try:
+            response = resend.Emails.send(payload)
+        except Exception as exc:
+            return False, str(exc)
+        finally:
+            resend.api_key = previous_api_key
+
+        if not isinstance(response, dict) or not response.get("id"):
+            return False, str(response)
+
+        return True, None
+
+    def send_verification_email(recipient_email: str, otp: str):
         html_body = build_verification_email_html(otp)
         text_body = (
             f"Your Lime Shop verification code is {otp}. "
@@ -291,15 +317,30 @@ def create_app() -> Flask:
             "text": text_body,
         }
 
-        try:
-            response = resend.Emails.send(payload)
-        except Exception as exc:
-            return False, str(exc)
+        return send_email_via_resend(payload, _resend_new_user_api_key)
 
-        if not isinstance(response, dict) or not response.get("id"):
-            return False, str(response)
-
-        return True, None
+    def send_email_change_verification(
+        recipient_email: str, otp: str, recipient_name: Optional[str]
+    ):
+        html_body = render_template(
+            "verify_new_email.html",
+            otp=otp,
+            recipient_email=recipient_email,
+            recipient_name=recipient_name or "",
+            expiration_minutes=email_change_otp_expiration_minutes,
+        )
+        text_body = (
+            f"Use this code {otp} to confirm your new Lime Shop email. "
+            f"The code expires in {email_change_otp_expiration_minutes} minutes."
+        )
+        payload: Dict[str, object] = {
+            "from": f"Lime Shop <{email_change_sender}>",
+            "to": [recipient_email],
+            "subject": email_change_subject,
+            "html": html_body,
+            "text": text_body,
+        }
+        return send_email_via_resend(payload, _resend_verify_new_email_api_key)
 
     def dispatch_verification_code(email: str):
         otp = generate_otp_code()
@@ -517,6 +558,7 @@ def create_app() -> Flask:
         return {
             "name": user_document.get("name", "") or "",
             "email": user_document.get("email", "") or "",
+            "pending_email": user_document.get("pending_email", "") or "",
             "phone": user_document.get("phone", "") or "",
             "role": get_user_role(user_document),
             "avatar_url": build_upload_url(user_document.get("avatar_filename")),
@@ -1679,7 +1721,12 @@ def create_app() -> Flask:
 
         payload = request.get_json(silent=True) or {}
 
-        desired_email = normalize_email(payload.get("email", current_email))
+        incoming_email_value = payload.get("email")
+        desired_email = (
+            normalize_email(incoming_email_value)
+            if incoming_email_value is not None
+            else current_email
+        )
         desired_name = str(payload.get("name", user.get("name", ""))).strip()
         desired_phone = str(payload.get("phone", user.get("phone", ""))).strip()
         new_password = str(payload.get("password", "")).strip()
@@ -1692,17 +1739,50 @@ def create_app() -> Flask:
             else {}
         )
 
-        if not desired_email:
+        if incoming_email_value is not None and not desired_email:
             return jsonify({"message": "Email is required."}), 400
-
-        if desired_email != current_email and db.users.find_one({"email": desired_email}):
-            return jsonify({"message": "Another account already uses this email."}), 400
 
         updates: Dict[str, str] = {}
         unset_ops: Dict[str, str] = {}
+        email_change_triggered = False
 
-        if desired_email != user.get("email"):
-            updates["email"] = desired_email
+        requested_email_change = incoming_email_value is not None and desired_email != user.get(
+            "email"
+        )
+
+        if requested_email_change:
+            if not is_valid_email(desired_email):
+                return jsonify({"message": "Please provide a valid email address."}), 400
+
+            existing_user_with_email = db.users.find_one(
+                {"email": desired_email, "_id": {"$ne": user["_id"]}}
+            )
+            if existing_user_with_email:
+                return jsonify({"message": "Another account already uses this email."}), 400
+
+            otp_code = generate_otp_code()
+            expires_at = datetime.utcnow() + timedelta(
+                minutes=email_change_otp_expiration_minutes
+            )
+            recipient_name = desired_name or user.get("name", "")
+            sent, error_details = send_email_change_verification(
+                desired_email, otp_code, recipient_name
+            )
+            if not sent:
+                return (
+                    jsonify(
+                        {
+                            "message": error_details
+                            or "We couldn't send the verification code. Please try again.",
+                        }
+                    ),
+                    500,
+                )
+
+            updates["pending_email"] = desired_email
+            updates["email_change_otp"] = otp_code
+            updates["email_change_otp_expiration"] = expires_at
+            email_change_triggered = True
 
         if desired_name and desired_name != user.get("name"):
             updates["name"] = desired_name
@@ -1761,11 +1841,87 @@ def create_app() -> Flask:
 
         token = create_access_token(identity=normalize_email(updated_user.get("email")))
         user_profile = serialize_user_profile(updated_user)
+        response_message = (
+            "A code has been sent to your new email."
+            if email_change_triggered
+            else "Account updated successfully."
+        )
+
         return jsonify(
             {
-                "message": "Account updated successfully.",
+                "message": response_message,
                 "access_token": token,
                 "user": user_profile,
+            }
+        )
+
+    @app.route("/api/account/verify-email-change", methods=["POST"])
+    @jwt_required()
+    def verify_email_change():
+        current_email = get_jwt_identity()
+        user = db.users.find_one({"email": current_email})
+
+        if not user:
+            return jsonify({"message": "Account not found."}), 404
+
+        payload = request.get_json(silent=True) or {}
+        provided_otp = str(payload.get("otp", "")).strip()
+
+        if not provided_otp:
+            return jsonify({"message": "Verification code is required."}), 400
+
+        pending_email = user.get("pending_email")
+        stored_otp = str(user.get("email_change_otp", "") or "").strip()
+        expires_at = user.get("email_change_otp_expiration")
+
+        if not pending_email or not stored_otp:
+            return jsonify({"message": "No email change request is pending."}), 400
+
+        if isinstance(expires_at, datetime) and expires_at < datetime.utcnow():
+            db.users.update_one(
+                {"_id": user["_id"]},
+                {
+                    "$unset": {
+                        "pending_email": "",
+                        "email_change_otp": "",
+                        "email_change_otp_expiration": "",
+                    }
+                },
+            )
+            return jsonify({"message": "The verification code has expired."}), 400
+
+        if provided_otp != stored_otp:
+            return jsonify({"message": "Invalid verification code."}), 400
+
+        normalized_pending_email = normalize_email(pending_email)
+        if not normalized_pending_email:
+            return jsonify({"message": "Pending email is invalid."}), 400
+
+        if db.users.find_one(
+            {"email": normalized_pending_email, "_id": {"$ne": user["_id"]}}
+        ):
+            return jsonify({"message": "Another account already uses this email."}), 400
+
+        updates = {
+            "email": normalized_pending_email,
+            "email_verified": True,
+            "verified_at": datetime.utcnow(),
+        }
+        unset_ops = {
+            "pending_email": "",
+            "email_change_otp": "",
+            "email_change_otp_expiration": "",
+        }
+
+        db.users.update_one({"_id": user["_id"]}, {"$set": updates, "$unset": unset_ops})
+
+        updated_user = db.users.find_one({"_id": user["_id"]})
+        token = create_access_token(identity=normalize_email(updated_user.get("email")))
+        return jsonify(
+            {
+                "message": "Email successfully updated.",
+                "access_token": token,
+                "user": serialize_user_profile(updated_user),
             }
         )
 
