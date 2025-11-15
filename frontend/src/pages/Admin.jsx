@@ -10,6 +10,10 @@ const ROLE_OPTIONS = [
   { value: "seller", label: "Seller" },
   { value: "standard", label: "Standard User" },
 ];
+const ADMIN_TABS = [
+  { value: "members", label: "Members" },
+  { value: "logs", label: "Logs" },
+];
 
 const normalizeAdminUser = (user) => {
   if (!user) {
@@ -35,6 +39,28 @@ const Admin = () => {
   const [userStatuses, setUserStatuses] = useState({});
   const [profileActions, setProfileActions] = useState({});
   const [expandedUserId, setExpandedUserId] = useState(null);
+  const [activeTab, setActiveTab] = useState("members");
+  const [logs, setLogs] = useState([]);
+  const [logsStatus, setLogsStatus] = useState("idle");
+  const [logsFeedback, setLogsFeedback] = useState("");
+  const [logsFilters, setLogsFilters] = useState({
+    search: "",
+    startDate: "",
+    endDate: "",
+  });
+  const [logsQuery, setLogsQuery] = useState({
+    search: "",
+    startDate: "",
+    endDate: "",
+  });
+  const [logsPagination, setLogsPagination] = useState({
+    page: 1,
+    limit: 100,
+    total: 0,
+    pages: 0,
+  });
+  const [logDeleteStatus, setLogDeleteStatus] = useState("idle");
+  const [logDeleteFeedback, setLogDeleteFeedback] = useState("");
 
   const normalizedEmail = profile?.email
     ? profile.email.trim().toLowerCase()
@@ -98,8 +124,130 @@ const Admin = () => {
     fetchUsers();
   }, [isAdmin]);
 
+  useEffect(() => {
+    if (!isAdmin || activeTab !== "logs") {
+      return;
+    }
+
+    const fetchLogs = async () => {
+      setLogsStatus("loading");
+      setLogsFeedback("");
+
+      try {
+        const params = new URLSearchParams();
+        if (logsQuery.search && logsQuery.search.trim()) {
+          params.set("search", logsQuery.search.trim());
+        }
+        if (logsQuery.startDate) {
+          params.set("start", logsQuery.startDate);
+        }
+        if (logsQuery.endDate) {
+          params.set("end", logsQuery.endDate);
+        }
+        params.set("limit", "100");
+        const queryString = params.toString();
+        const endpoint = queryString
+          ? `/api/admin/logs?${queryString}`
+          : "/api/admin/logs";
+        const { data } = await apiClient.get(endpoint);
+        const receivedLogs = Array.isArray(data?.logs) ? data.logs : [];
+        setLogs(receivedLogs);
+        setLogsPagination({
+          page: data?.pagination?.page ?? 1,
+          limit: data?.pagination?.limit ?? 100,
+          total: data?.pagination?.total ?? receivedLogs.length,
+          pages: data?.pagination?.pages ?? 1,
+        });
+        setLogsStatus("success");
+      } catch (error) {
+        const message =
+          error.response?.data?.message ??
+          "We couldn't load the activity logs. Please try again.";
+        setLogsStatus("error");
+        setLogsFeedback(message);
+        setLogs([]);
+      }
+    };
+
+    fetchLogs();
+  }, [isAdmin, activeTab, logsQuery]);
+
   const handleProfileToggle = (userId) => {
     setExpandedUserId((prev) => (prev === userId ? null : userId));
+  };
+
+  const handleTabChange = (nextTab) => {
+    setActiveTab(nextTab);
+  };
+
+  const handleLogsFilterChange = (event) => {
+    const { name, value } = event.target;
+    setLogsFilters((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleLogsApply = () => {
+    setLogsQuery(logsFilters);
+  };
+
+  const handleLogsReset = () => {
+    const resetState = { search: "", startDate: "", endDate: "" };
+    setLogsFilters(resetState);
+    setLogsQuery(resetState);
+  };
+
+  const handleLogsRefresh = () => {
+    setLogsQuery((prev) => ({ ...prev }));
+  };
+
+  const handleLogsDelete = async (scope) => {
+    if (
+      scope === "filtered" &&
+      !logsFilters.startDate &&
+      !logsFilters.endDate
+    ) {
+      setLogDeleteStatus("error");
+      setLogDeleteFeedback(
+        "Select a start or end date before deleting logs for a range."
+      );
+      return;
+    }
+
+    const confirmMessage =
+      scope === "filtered"
+        ? "Delete all logs within the selected date range? This cannot be undone."
+        : "Delete all audit logs? This cannot be undone.";
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    setLogDeleteStatus("loading");
+    setLogDeleteFeedback("");
+
+    try {
+      const payload =
+        scope === "filtered"
+          ? {
+              ...(logsFilters.startDate ? { from: logsFilters.startDate } : {}),
+              ...(logsFilters.endDate ? { to: logsFilters.endDate } : {}),
+            }
+          : {};
+      const config =
+        scope === "filtered" ? { data: payload } : undefined;
+      await apiClient.delete("/api/admin/logs", config);
+      setLogDeleteStatus("success");
+      setLogDeleteFeedback(
+        scope === "filtered"
+          ? "Logs for the selected dates were removed."
+          : "All logs were removed."
+      );
+      setLogsQuery((prev) => ({ ...prev }));
+    } catch (error) {
+      const message =
+        error.response?.data?.message ??
+        "We couldn't delete those logs. Please try again.";
+      setLogDeleteStatus("error");
+      setLogDeleteFeedback(message);
+    }
   };
 
   const updateProfileActionStatus = (
@@ -317,6 +465,161 @@ const Admin = () => {
     }
   };
 
+  const describeMetadata = (metadata) => {
+    if (!metadata || typeof metadata !== "object") {
+      return "--";
+    }
+    const entries = Object.entries(metadata).filter(
+      ([, value]) =>
+        value !== null &&
+        value !== undefined &&
+        String(value).trim() !== ""
+    );
+    if (!entries.length) {
+      return "--";
+    }
+    return entries.map(([key, value]) => `${key}: ${value}`).join(" • ");
+  };
+
+  const renderLogsSection = () => (
+    <div className="admin-page__card admin-logs">
+      <div className="admin-logs__filters">
+        <label className="input-group">
+          <span>Search by name or email</span>
+          <input
+            name="search"
+            value={logsFilters.search}
+            onChange={handleLogsFilterChange}
+            placeholder="Type a user or action"
+          />
+        </label>
+        <label className="input-group">
+          <span>Start date</span>
+          <input
+            type="date"
+            name="startDate"
+            value={logsFilters.startDate}
+            onChange={handleLogsFilterChange}
+          />
+        </label>
+        <label className="input-group">
+          <span>End date</span>
+          <input
+            type="date"
+            name="endDate"
+            value={logsFilters.endDate}
+            onChange={handleLogsFilterChange}
+          />
+        </label>
+      </div>
+      <div className="admin-logs__actions">
+        <button
+          type="button"
+          className="button button--gradient"
+          onClick={handleLogsApply}
+          disabled={logsStatus === "loading"}
+        >
+          Apply filters
+        </button>
+        <button
+          type="button"
+          className="button button--outline"
+          onClick={handleLogsReset}
+          disabled={logsStatus === "loading"}
+        >
+          Reset
+        </button>
+        <button
+          type="button"
+          className="button button--outline"
+          onClick={handleLogsRefresh}
+          disabled={logsStatus === "loading"}
+        >
+          Refresh
+        </button>
+      </div>
+      {logsStatus === "loading" ? (
+        <p className="page__status">Loading audit history...</p>
+      ) : logsStatus === "error" ? (
+        <p className="form-feedback form-feedback--error">{logsFeedback}</p>
+      ) : logs.length === 0 ? (
+        <p className="page__status">
+          {logsFeedback || "No activity logs match your filters yet."}
+        </p>
+      ) : (
+        <>
+          <p className="admin-logs__summary">
+            Showing {logs.length}
+            {logsPagination.total
+              ? ` of ${logsPagination.total} entries`
+              : " entries"}
+            {logsPagination.pages > 1
+              ? ` • Page ${logsPagination.page} of ${logsPagination.pages}`
+              : ""}
+          </p>
+          <div className="admin-table__wrapper">
+            <table className="admin-table admin-logs__table">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Action</th>
+                  <th>Details</th>
+                  <th>Timestamp</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((logEntry) => (
+                  <tr key={logEntry.id || logEntry.created_at}>
+                    <td>
+                      <p className="admin-logs__user-name">
+                        {logEntry.user_name || "System"}
+                      </p>
+                      <p className="admin-logs__user-email">
+                        {logEntry.user_email || "—"}
+                      </p>
+                    </td>
+                    <td>{logEntry.action || "--"}</td>
+                    <td>{describeMetadata(logEntry.metadata)}</td>
+                    <td>{formatDateTime(logEntry.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      <div className="admin-logs__purge">
+        <button
+          type="button"
+          className="button button--outline"
+          onClick={() => handleLogsDelete("filtered")}
+          disabled={logDeleteStatus === "loading"}
+        >
+          Delete selected range
+        </button>
+        <button
+          type="button"
+          className="button button--danger"
+          onClick={() => handleLogsDelete("all")}
+          disabled={logDeleteStatus === "loading"}
+        >
+          Delete all logs
+        </button>
+      </div>
+      {logDeleteFeedback && (
+        <p
+          className={`form-feedback ${
+            logDeleteStatus === "error"
+              ? "form-feedback--error"
+              : "form-feedback--success"
+          }`}
+        >
+          {logDeleteFeedback}
+        </p>
+      )}
+    </div>
+  );
+
 
   if (!isAdmin) {
     return null;
@@ -326,35 +629,50 @@ const Admin = () => {
     <section className="page admin-page">
       <div className="admin-page__header">
         <p className="eyebrow">Admin</p>
-        <h1 className="page__title">Manage Lime Store Members</h1>
+        <h1 className="page__title">Admin Portal</h1>
         <p className="page__subtitle">
           Review every registered profile and adjust their access level between
           administrator, seller, and standard access tiers.
         </p>
       </div>
-      <div className="admin-page__card">
-        {status === "loading" ? (
-          <p className="page__status">Fetching the member directory...</p>
-        ) : users.length === 0 ? (
-          <p className="page__status">
-            No profiles found yet. Invite customers to register to see them
-            listed here.
-          </p>
-        ) : (
-          <div className="admin-table__wrapper">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Phone</th>
-                  <th>Member Since</th>
-                  <th>Role</th>
-                  <th className="admin-table__profile-header">Profile</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((user) => {
+      <div className="admin-tabs">
+        {ADMIN_TABS.map((tab) => (
+          <button
+            key={tab.value}
+            type="button"
+            className={`admin-tab${
+              activeTab === tab.value ? " admin-tab--active" : ""
+            }`}
+            onClick={() => handleTabChange(tab.value)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {activeTab === "members" ? (
+        <div className="admin-page__card">
+          {status === "loading" ? (
+            <p className="page__status">Fetching the member directory...</p>
+          ) : users.length === 0 ? (
+            <p className="page__status">
+              No profiles found yet. Invite customers to register to see them
+              listed here.
+            </p>
+          ) : (
+            <div className="admin-table__wrapper">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th>Member Since</th>
+                    <th>Role</th>
+                    <th className="admin-table__profile-header">Profile</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((user) => {
                   const normalizedRole =
                     typeof user.role === "string"
                       ? user.role.toLowerCase()
@@ -676,20 +994,25 @@ const Admin = () => {
                     </Fragment>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {feedback ? (
-          <p
-            className={`form-feedback admin-page__feedback ${
-              status === "error" ? "form-feedback--error" : "form-feedback--success"
-            }`}
-          >
-            {feedback}
-          </p>
-        ) : null}
-      </div>
+                </tbody>
+              </table>
+            </div>
+          )}
+          {feedback ? (
+            <p
+              className={`form-feedback admin-page__feedback ${
+                status === "error"
+                  ? "form-feedback--error"
+                  : "form-feedback--success"
+              }`}
+            >
+              {feedback}
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        renderLogsSection()
+      )}
     </section>
   );
 };

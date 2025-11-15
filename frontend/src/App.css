@@ -204,6 +204,17 @@
   border-color: rgba(115, 255, 198, 0.75);
 }
 
+.button--danger {
+  background: rgba(120, 21, 21, 0.85);
+  border-color: rgba(255, 118, 118, 0.5);
+  color: #ffeaea;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
+}
+
+.button--danger:hover {
+  border-color: rgba(255, 118, 118, 0.85);
+}
+
 .button--ghost {
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(169, 255, 124, 0.2);
@@ -2857,6 +2868,72 @@
 .admin-table__profile-button:focus-visible {
   outline: 2px solid rgba(169, 255, 124, 0.8);
   outline-offset: 3px;
+}
+
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.admin-tab {
+  border-radius: 999px;
+  border: 1px solid rgba(169, 255, 124, 0.25);
+  background: rgba(5, 12, 9, 0.85);
+  color: rgba(226, 248, 220, 0.75);
+  padding: 0.5rem 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: border-color 200ms ease, color 200ms ease,
+    background 200ms ease;
+}
+
+.admin-tab--active {
+  border-color: rgba(169, 255, 124, 0.8);
+  color: var(--text-primary);
+  background: rgba(15, 34, 25, 0.85);
+}
+
+.admin-logs__filters {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.admin-logs__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.admin-logs__summary {
+  margin: 0;
+  font-size: 0.95rem;
+  color: rgba(226, 248, 220, 0.8);
+}
+
+.admin-logs__table tbody td {
+  min-width: 180px;
+}
+
+.admin-logs__user-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.admin-logs__user-email {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.admin-logs__purge {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
 }
 
 .admin-table__profile-button.is-active {

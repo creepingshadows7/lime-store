@@ -117,6 +117,15 @@ def create_app() -> Flask:
             "Unable to ensure TTL index for verification codes: %s", exc
         )
 
+    audit_logs_collection = db.audit_logs
+    try:
+        audit_logs_collection.create_index([("created_at", -1)])
+        audit_logs_collection.create_index(
+            [("user_email", 1), ("user_name", 1), ("action", 1)]
+        )
+    except Exception as exc:
+        app.logger.warning("Unable to ensure indexes for audit logs: %s", exc)
+
     seed_products = [
         {
             "name": "Luminous Lime Elixir",
@@ -225,6 +234,75 @@ def create_app() -> Flask:
         log_message = f"OTP dispatch failed for {email}: {details}"
         app.logger.error(log_message)
         print(f"[OTP][ERROR] {log_message}", flush=True)
+
+    def sanitize_metadata(metadata: Optional[Dict]) -> Dict[str, str]:
+        if not isinstance(metadata, dict):
+            return {}
+        sanitized: Dict[str, str] = {}
+        for key, value in metadata.items():
+            if value is None:
+                continue
+            sanitized[str(key)] = str(value)
+        return sanitized
+
+    def record_audit_log(
+        actor_email: Optional[str], action: str, metadata: Optional[Dict] = None
+    ):
+        if not action:
+            return
+        try:
+            normalized_email = normalize_email(actor_email)
+            log_document = {
+                "user_email": normalized_email or None,
+                "user_name": "",
+                "action": action,
+                "metadata": sanitize_metadata(metadata),
+                "created_at": datetime.utcnow(),
+            }
+            if normalized_email:
+                user_document = db.users.find_one({"email": normalized_email})
+                if user_document:
+                    log_document["user_name"] = user_document.get("name", "") or ""
+                    log_document["metadata"].setdefault(
+                        "user_role", get_user_role(user_document)
+                    )
+            audit_logs_collection.insert_one(log_document)
+        except Exception as exc:
+            app.logger.warning("Unable to record audit log: %s", exc)
+
+    def serialize_audit_log(document):
+        if not document:
+            return {}
+        created_at = document.get("created_at")
+        metadata = document.get("metadata")
+        serialized_metadata = metadata if isinstance(metadata, dict) else {}
+        return {
+            "id": str(document.get("_id")),
+            "user_email": document.get("user_email") or "",
+            "user_name": document.get("user_name") or "",
+            "action": document.get("action") or "",
+            "metadata": serialized_metadata,
+            "created_at": created_at.isoformat() + "Z"
+            if isinstance(created_at, datetime)
+            else None,
+        }
+
+    def parse_iso_date(value: Optional[str], *, end_of_day: bool = False):
+        if not value:
+            return None
+        candidate = str(value).strip()
+        if not candidate:
+            return None
+        normalized = candidate.replace("Z", "+00:00")
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", candidate):
+            normalized = f"{candidate}T00:00:00"
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if end_of_day and re.fullmatch(r"\d{4}-\d{2}-\d{2}", candidate):
+            return parsed + timedelta(days=1)
+        return parsed
 
     def build_verification_email_html(otp: str) -> str:
         colors = brand_colors
@@ -1637,6 +1715,12 @@ def create_app() -> Flask:
                 502,
             )
 
+        record_audit_log(
+            email,
+            "Registered new account",
+            {"user_id": str(insert_result.inserted_id)},
+        )
+
         return (
             jsonify(
                 {
@@ -1701,6 +1785,15 @@ def create_app() -> Flask:
 
         token = create_access_token(identity=email)
         user_profile = serialize_user_profile(user)
+
+        record_audit_log(
+            email,
+            "Signed in",
+            {
+                "ip": request.headers.get("X-Forwarded-For", request.remote_addr),
+            },
+        )
+
         return jsonify({"access_token": token, "user": user_profile})
 
     @app.route("/api/account", methods=["GET", "PUT"])
@@ -1825,6 +1918,16 @@ def create_app() -> Flask:
             elif user.get("address"):
                 unset_ops["address"] = ""
 
+        changed_fields: List[str] = []
+        if "name" in updates:
+            changed_fields.append("name")
+        if "phone" in updates or "phone" in unset_ops:
+            changed_fields.append("phone")
+        if "address" in updates or "address" in unset_ops:
+            changed_fields.append("address")
+        if "password" in updates:
+            changed_fields.append("password")
+
         if not updates and not unset_ops:
             return jsonify({"message": "No account changes detected."}), 400
 
@@ -1841,6 +1944,19 @@ def create_app() -> Flask:
 
         token = create_access_token(identity=normalize_email(updated_user.get("email")))
         user_profile = serialize_user_profile(updated_user)
+        if email_change_triggered:
+            record_audit_log(
+                current_email,
+                "Requested email change",
+                {"pending_email": desired_email},
+            )
+        elif changed_fields:
+            record_audit_log(
+                current_email,
+                "Updated account details",
+                {"fields": ", ".join(sorted(changed_fields))},
+            )
+
         response_message = (
             "A code has been sent to your new email."
             if email_change_triggered
@@ -1917,6 +2033,11 @@ def create_app() -> Flask:
 
         updated_user = db.users.find_one({"_id": user["_id"]})
         token = create_access_token(identity=normalize_email(updated_user.get("email")))
+        record_audit_log(
+            updated_user.get("email"),
+            "Confirmed email change",
+            {"new_email": normalized_pending_email},
+        )
         return jsonify(
             {
                 "message": "Email successfully updated.",
@@ -1963,6 +2084,13 @@ def create_app() -> Flask:
                 else "No profile picture on record. Nothing to remove."
             )
 
+            if previous_filename:
+                record_audit_log(
+                    current_email,
+                    "Removed profile avatar",
+                    {},
+                )
+
             return jsonify(
                 {
                     "message": message,
@@ -1999,6 +2127,12 @@ def create_app() -> Flask:
             identity=normalize_email(updated_user.get("email"))
         )
         user_profile = serialize_user_profile(updated_user)
+
+        record_audit_log(
+            current_email,
+            "Updated profile avatar",
+            {"filename": new_filename},
+        )
 
         return jsonify(
             {
@@ -2172,6 +2306,12 @@ def create_app() -> Flask:
             for document in product_docs
         ]
 
+        record_audit_log(
+            normalize_email(current_user.get("email")),
+            "Updated featured showcase",
+            {"product_ids": ", ".join(normalized_ids)},
+        )
+
         return jsonify(
             {
                 "message": "Home showcase updated successfully.",
@@ -2308,6 +2448,12 @@ def create_app() -> Flask:
         result = db.products.insert_one(product_document)
         created_product = db.products.find_one({"_id": result.inserted_id})
         category_map = fetch_categories_by_ids(created_product.get("category_ids"))
+
+        record_audit_log(
+            creator_email,
+            "Created product",
+            {"product_id": str(result.inserted_id), "product_name": name},
+        )
 
         return (
             jsonify(
@@ -2543,6 +2689,15 @@ def create_app() -> Flask:
         if removed_filenames:
             remove_product_image(removed_filenames)
 
+        record_audit_log(
+            normalize_email(current_user.get("email")),
+            "Updated product",
+            {
+                "product_id": str(product_document["_id"]),
+                "product_name": updated_product.get("name", ""),
+            },
+        )
+
         return jsonify(
             {
                 "message": "Product updated successfully.",
@@ -2585,6 +2740,15 @@ def create_app() -> Flask:
 
         remove_product_image(stored_filenames)
 
+        record_audit_log(
+            normalize_email(current_user.get("email")),
+            "Deleted product",
+            {
+                "product_id": str(product_document.get("_id")),
+                "product_name": product_document.get("name", ""),
+            },
+        )
+
         return jsonify({"message": "Product removed successfully."})
 
     # Categories
@@ -2625,6 +2789,13 @@ def create_app() -> Flask:
         )
         status_code = 201 if was_created else 200
 
+        if was_created:
+            record_audit_log(
+                creator_email,
+                "Created category",
+                {"category_id": str(category_document.get("_id")), "name": name_value},
+            )
+
         return (
             jsonify(
                 {
@@ -2663,6 +2834,12 @@ def create_app() -> Flask:
         normalized_counts = {
             str(key): int(value) for key, value in product_counts.items()
         }
+
+        record_audit_log(
+            normalize_email(current_user.get("email")),
+            "Deleted category",
+            {"category_id": str(category_object_id), "name": category_document.get("name", "")},
+        )
 
         return jsonify(
             {
@@ -2807,6 +2984,15 @@ def create_app() -> Flask:
             response_payload["access_token"] = updated_token
             response_payload["user"] = updated_profile
 
+        record_audit_log(
+            current_user_email or customer_email,
+            "Created order",
+            {
+                "order_number": order_number,
+                "total_items": str(totals["total_items"]),
+            },
+        )
+
         return jsonify(response_payload)
 
     @app.route("/api/orders", methods=["GET"])
@@ -2843,7 +3029,7 @@ def create_app() -> Flask:
     @app.route("/api/admin/users/<user_id>/role", methods=["PUT"])
     @jwt_required()
     def update_user_role(user_id: str):
-        _, admin_error = require_admin_user()
+        admin_user, admin_error = require_admin_user()
         if admin_error:
             return admin_error
 
@@ -2877,6 +3063,12 @@ def create_app() -> Flask:
         )
         updated_user = db.users.find_one({"_id": target_object_id})
 
+        record_audit_log(
+            normalize_email(admin_user.get("email") if admin_user else None),
+            "Updated user role",
+            {"target_email": target_email, "new_role": desired_role},
+        )
+
         return jsonify(
             {
                 "message": f"Role updated to {desired_role}.",
@@ -2887,7 +3079,7 @@ def create_app() -> Flask:
     @app.route("/api/admin/users/<user_id>/verify", methods=["PUT"])
     @jwt_required()
     def admin_update_user_verification(user_id: str):
-        _, admin_error = require_admin_user()
+        admin_user, admin_error = require_admin_user()
         if admin_error:
             return admin_error
 
@@ -2925,6 +3117,15 @@ def create_app() -> Flask:
             else "User email marked as unverified."
         )
 
+        record_audit_log(
+            normalize_email(admin_user.get("email") if admin_user else None),
+            "Updated user verification",
+            {
+                "target_email": normalize_email(user_document.get("email")),
+                "verified": str(desired_state),
+            },
+        )
+
         return jsonify(
             {
                 "message": message,
@@ -2935,7 +3136,7 @@ def create_app() -> Flask:
     @app.route("/api/admin/users/<user_id>/avatar", methods=["DELETE"])
     @jwt_required()
     def admin_remove_user_avatar(user_id: str):
-        _, admin_error = require_admin_user()
+        admin_user, admin_error = require_admin_user()
         if admin_error:
             return admin_error
 
@@ -2971,12 +3172,19 @@ def create_app() -> Flask:
             else "No profile picture on file for this user."
         )
 
+        if avatar_filename:
+            record_audit_log(
+                normalize_email(admin_user.get("email") if admin_user else None),
+                "Removed another user's avatar",
+                {"target_email": normalize_email(user_to_update.get("email"))},
+            )
+
         return jsonify({"message": message, "user": serialize_admin_user(updated_user)})
 
     @app.route("/api/admin/users/<user_id>", methods=["DELETE"])
     @jwt_required()
     def admin_delete_user(user_id: str):
-        _, admin_error = require_admin_user()
+        admin_user, admin_error = require_admin_user()
         if admin_error:
             return admin_error
 
@@ -3004,11 +3212,112 @@ def create_app() -> Flask:
 
         db.users.delete_one({"_id": target_object_id})
 
+        record_audit_log(
+            normalize_email(admin_user.get("email") if admin_user else None),
+            "Deleted user",
+            {"target_email": target_email, "display_name": user_to_delete.get("name", "")},
+        )
+
         display_name = user_to_delete.get("name") or "User"
         return jsonify(
             {
                 "message": f"{display_name} has been removed from the directory.",
                 "user": {"id": str(target_object_id)},
+            }
+        )
+
+    @app.route("/api/admin/logs", methods=["GET"])
+    @jwt_required()
+    def admin_list_logs():
+        _, admin_error = require_admin_user()
+        if admin_error:
+            return admin_error
+
+        search_term = (request.args.get("search") or "").strip()
+        start_param = request.args.get("start") or request.args.get("from")
+        end_param = request.args.get("end") or request.args.get("to")
+        page = max(int(request.args.get("page", 1)), 1)
+        limit = min(max(int(request.args.get("limit", 50)), 1), 200)
+
+        query: Dict[str, object] = {}
+        if search_term:
+            regex = re.compile(re.escape(search_term), re.IGNORECASE)
+            query["$or"] = [
+                {"user_email": regex},
+                {"user_name": regex},
+                {"action": regex},
+            ]
+
+        start_date = parse_iso_date(start_param)
+        end_date = parse_iso_date(end_param, end_of_day=True)
+        if start_date or end_date:
+            created_filter: Dict[str, datetime] = {}
+            if start_date:
+                created_filter["$gte"] = start_date
+            if end_date:
+                created_filter["$lt"] = end_date
+            query["created_at"] = created_filter
+
+        skip = (page - 1) * limit
+        cursor = (
+            audit_logs_collection.find(query)
+            .sort("created_at", -1)
+            .skip(skip)
+            .limit(limit)
+        )
+        logs = [serialize_audit_log(document) for document in cursor]
+        total = audit_logs_collection.count_documents(query)
+
+        return jsonify(
+            {
+                "logs": logs,
+                "pagination": {
+                    "page": page,
+                    "limit": limit,
+                    "total": total,
+                    "pages": math.ceil(total / limit) if total else 0,
+                },
+            }
+        )
+
+    @app.route("/api/admin/logs", methods=["DELETE"])
+    @jwt_required()
+    def admin_delete_logs():
+        admin_user, admin_error = require_admin_user()
+        if admin_error:
+            return admin_error
+
+        payload = request.get_json(silent=True) or {}
+        start_param = payload.get("from") or payload.get("start")
+        end_param = payload.get("to") or payload.get("end")
+
+        start_date = parse_iso_date(start_param)
+        end_date = parse_iso_date(end_param, end_of_day=True)
+
+        delete_query: Dict[str, object] = {}
+        if start_date or end_date:
+            created_filter: Dict[str, datetime] = {}
+            if start_date:
+                created_filter["$gte"] = start_date
+            if end_date:
+                created_filter["$lt"] = end_date
+            delete_query["created_at"] = created_filter
+
+        result = audit_logs_collection.delete_many(delete_query or {})
+
+        record_audit_log(
+            normalize_email(admin_user.get("email") if admin_user else None),
+            "Deleted audit logs",
+            {
+                "count": str(result.deleted_count),
+                "range": "filtered" if delete_query else "all",
+            },
+        )
+
+        return jsonify(
+            {
+                "message": f"Removed {result.deleted_count} audit log entries.",
+                "deleted": result.deleted_count,
             }
         )
 
