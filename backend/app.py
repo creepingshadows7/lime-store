@@ -35,6 +35,9 @@ _resend_new_user_api_key = (
 _resend_verify_new_email_api_key = (
     os.getenv("RESEND_VERIFY_NEW_EMAIL_API_KEY") or ""
 ).strip()
+_resend_password_reset_api_key = (
+    os.getenv("RESEND_PASSWORD_RESET_API_KEY") or ""
+).strip()
 if _resend_new_user_api_key:
     resend.api_key = _resend_new_user_api_key
 
@@ -74,7 +77,14 @@ def create_app() -> Flask:
     app.config["PRODUCT_ALLOWED_EXTENSIONS"] = {"png", "jpg", "jpeg", "gif", "webp"}
 
     # --- Initialize extensions ---
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    CORS(
+        app,
+        resources={
+            r"/api/*": {"origins": "*"},
+            "/forgot-password": {"origins": "*"},
+            "/reset-password": {"origins": "*"},
+        },
+    )
     JWTManager(app)
     mongo = PyMongo(app)
     db = mongo.db
@@ -105,6 +115,10 @@ def create_app() -> Flask:
     email_change_otp_expiration_minutes = int(
         os.getenv("EMAIL_CHANGE_OTP_EXPIRATION_MINUTES", "10")
     )
+    password_reset_otp_length = 6
+    password_reset_expiration_minutes = 10
+    password_reset_sender_email = "verification@limeshop.store"
+    password_reset_subject = "Lime Store Password Reset"
     max_failed_otp_attempts = 5
     email_verification_collection = db.email_verification_tokens
 
@@ -420,6 +434,25 @@ def create_app() -> Flask:
         }
         return send_email_via_resend(payload, _resend_verify_new_email_api_key)
 
+    def send_password_reset_email(recipient_email: str, otp: str):
+        html_body = render_template(
+            "password_reset_email.html",
+            otp=otp,
+            expiration_minutes=password_reset_expiration_minutes,
+        )
+        text_body = (
+            f"Use this code {otp} to reset your Lime Store password within "
+            f"{password_reset_expiration_minutes} minutes."
+        )
+        payload: Dict[str, object] = {
+            "from": f"Lime Shop <{password_reset_sender_email}>",
+            "to": [recipient_email],
+            "subject": password_reset_subject,
+            "html": html_body,
+            "text": text_body,
+        }
+        return send_email_via_resend(payload, _resend_password_reset_api_key)
+
     def dispatch_verification_code(email: str):
         otp = generate_otp_code()
         expires_at = persist_verification_code(email, otp)
@@ -438,6 +471,33 @@ def create_app() -> Flask:
             "expires_at": expires_at,
             "otp_length": otp_code_length,
         }
+
+    def begin_password_reset(user_document) -> Tuple[str, datetime]:
+        otp = generate_otp_code(password_reset_otp_length)
+        expires_at = datetime.utcnow() + timedelta(
+            minutes=password_reset_expiration_minutes
+        )
+        db.users.update_one(
+            {"_id": user_document["_id"]},
+            {
+                "$set": {
+                    "password_reset_otp": otp,
+                    "password_reset_otp_expiration": expires_at,
+                }
+            },
+        )
+        return otp, expires_at
+
+    def clear_password_reset_state(user_id):
+        db.users.update_one(
+            {"_id": user_id},
+            {
+                "$unset": {
+                    "password_reset_otp": "",
+                    "password_reset_otp_expiration": "",
+                }
+            },
+        )
 
     def ensure_seed_products():
         if db.products.count_documents({}) > 0:
@@ -1693,6 +1753,8 @@ def create_app() -> Flask:
             "created_at": datetime.utcnow(),
             "role": assigned_role,
             "email_verified": False,
+            "password_reset_otp": None,
+            "password_reset_otp_expiration": None,
         }
 
         if phone:
@@ -1795,6 +1857,83 @@ def create_app() -> Flask:
         )
 
         return jsonify({"access_token": token, "user": user_profile})
+
+    @app.route("/forgot-password", methods=["POST"])
+    def forgot_password():
+        payload = request.get_json(silent=True) or {}
+        email = normalize_email(payload.get("email"))
+        generic_message = {
+            "message": "If this email exists, a reset code has been sent."
+        }
+
+        if not email or not is_valid_email(email):
+            return jsonify(generic_message), 200
+
+        user = db.users.find_one({"email": email})
+        if user:
+            otp, _ = begin_password_reset(user)
+            sent, error_details = send_password_reset_email(email, otp)
+            if not sent:
+                app.logger.error(
+                    "Password reset email delivery failed for %s: %s",
+                    email,
+                    error_details or "Unknown delivery error",
+                )
+
+        return jsonify(generic_message), 200
+
+    @app.route("/reset-password", methods=["POST"])
+    def reset_password():
+        payload = request.get_json(silent=True) or {}
+        email = normalize_email(payload.get("email"))
+        otp = str(payload.get("otp", "")).strip()
+        new_password = str(payload.get("new_password", "")).strip()
+
+        if not email or not otp or not new_password:
+            return (
+                jsonify(
+                    {
+                        "message": "Email, reset code, and new password are required.",
+                    }
+                ),
+                400,
+            )
+
+        user = db.users.find_one({"email": email})
+        if not user:
+            return jsonify({"message": "Invalid or expired reset code."}), 400
+
+        stored_otp = str(user.get("password_reset_otp") or "").strip()
+        expires_at = user.get("password_reset_otp_expiration")
+        now = datetime.utcnow()
+
+        if not stored_otp or stored_otp != otp:
+            return jsonify({"message": "Invalid or expired reset code."}), 400
+
+        if not isinstance(expires_at, datetime) or expires_at < now:
+            clear_password_reset_state(user["_id"])
+            return jsonify({"message": "Invalid or expired reset code."}), 400
+
+        hashed_pw = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt())
+
+        db.users.update_one(
+            {"_id": user["_id"]},
+            {
+                "$set": {"password": hashed_pw},
+                "$unset": {
+                    "password_reset_otp": "",
+                    "password_reset_otp_expiration": "",
+                },
+            },
+        )
+
+        record_audit_log(
+            email,
+            "Reset password via OTP",
+            {"context": "password_reset"},
+        )
+
+        return jsonify({"message": "Password successfully reset"}), 200
 
     @app.route("/api/account", methods=["GET", "PUT"])
     @jwt_required()
