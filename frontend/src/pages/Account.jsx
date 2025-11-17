@@ -73,6 +73,14 @@ const Account = () => {
   const [otpFeedback, setOtpFeedback] = useState("");
   const [passwordStatus, setPasswordStatus] = useState("idle");
   const [passwordFeedback, setPasswordFeedback] = useState("");
+  const [resetEmailStatus, setResetEmailStatus] = useState("idle");
+  const [resetEmailFeedback, setResetEmailFeedback] = useState("");
+  const [resetOtpVisible, setResetOtpVisible] = useState(false);
+  const [resetOtpValue, setResetOtpValue] = useState("");
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [resetConfirmNewPassword, setResetConfirmNewPassword] = useState("");
+  const [resetOtpStatus, setResetOtpStatus] = useState("idle");
+  const [resetOtpFeedback, setResetOtpFeedback] = useState("");
   const [currentAvatarUrl, setCurrentAvatarUrl] = useState(
     profile?.avatar_url ?? ""
   );
@@ -119,6 +127,14 @@ const Account = () => {
       setPasswordValues(buildPasswordFormState());
       setPasswordStatus("idle");
       setPasswordFeedback("");
+      setResetEmailStatus("idle");
+      setResetEmailFeedback("");
+      setResetOtpVisible(false);
+      setResetOtpValue("");
+      setResetNewPassword("");
+      setResetConfirmNewPassword("");
+      setResetOtpStatus("idle");
+      setResetOtpFeedback("");
       setCurrentAvatarUrl("");
       setAvatarFile(null);
       setAvatarPreview((prev) => {
@@ -168,12 +184,35 @@ const Account = () => {
         setPasswordValues(buildPasswordFormState());
         setPasswordStatus("idle");
         setPasswordFeedback("");
+        setResetEmailStatus("idle");
+        setResetEmailFeedback("");
+        setResetOtpVisible(false);
+        setResetOtpValue("");
+        setResetNewPassword("");
+        setResetConfirmNewPassword("");
+        setResetOtpStatus("idle");
+        setResetOtpFeedback("");
         setIsLoadingProfile(false);
       }
     };
 
     loadProfile();
   }, [fileInputRef, isAuthenticated, profile, sanitizedProfile]);
+
+  const resolvedAccountEmail = useMemo(() => {
+    const candidates = [
+      profile?.pending_email,
+      pendingEmail,
+      profile?.email,
+      formValues.email,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim().toLowerCase();
+      }
+    }
+    return "";
+  }, [formValues.email, pendingEmail, profile]);
 
   const fetchOrders = useCallback(async () => {
     if (!isAuthenticated) {
@@ -629,6 +668,92 @@ const Account = () => {
     }
   };
 
+  const handleRequestAccountPasswordReset = async () => {
+    if (!resolvedAccountEmail) {
+      setResetEmailStatus("error");
+      setResetEmailFeedback(
+        "We need a verified email on file before we can send a reset code."
+      );
+      return;
+    }
+
+    setResetEmailStatus("loading");
+    setResetEmailFeedback("");
+
+    try {
+      await apiClient.post("/forgot-password", {
+        email: resolvedAccountEmail,
+      });
+      setResetEmailStatus("success");
+      setResetEmailFeedback(
+        `We sent a reset code to ${resolvedAccountEmail}. Enter it below to pick a new password.`
+      );
+      setResetOtpVisible(true);
+      setResetOtpStatus("idle");
+      setResetOtpFeedback("");
+      setResetOtpValue("");
+      setResetNewPassword("");
+      setResetConfirmNewPassword("");
+    } catch (error) {
+      const message =
+        error.response?.data?.message ??
+        "We couldn't send a reset email right now. Please try again.";
+      setResetEmailStatus("error");
+      setResetEmailFeedback(message);
+    }
+  };
+
+  const handleAccountOtpResetSubmit = async (event) => {
+    event.preventDefault();
+    if (!resolvedAccountEmail) {
+      setResetOtpStatus("error");
+      setResetOtpFeedback("We need an email address to apply the reset.");
+      return;
+    }
+    const code = resetOtpValue.trim();
+    const nextPassword = resetNewPassword.trim();
+    const confirm = resetConfirmNewPassword.trim();
+
+    if (!code || !nextPassword || !confirm) {
+      setResetOtpStatus("error");
+      setResetOtpFeedback("Complete the code and password fields to continue.");
+      return;
+    }
+
+    if (nextPassword !== confirm) {
+      setResetOtpStatus("error");
+      setResetOtpFeedback("New passwords do not match.");
+      return;
+    }
+
+    setResetOtpStatus("loading");
+    setResetOtpFeedback("");
+
+    try {
+      await apiClient.post("/reset-password", {
+        email: resolvedAccountEmail,
+        otp: code,
+        new_password: nextPassword,
+      });
+      setResetOtpStatus("success");
+      setResetOtpFeedback("");
+      setResetOtpValue("");
+      setResetNewPassword("");
+      setResetConfirmNewPassword("");
+      setResetOtpVisible(false);
+      setResetEmailStatus("success");
+      setResetEmailFeedback(
+        "Password updated. You can now continue browsing securely."
+      );
+    } catch (error) {
+      const message =
+        error.response?.data?.message ??
+        "We couldn't reset your password with that code.";
+      setResetOtpStatus("error");
+      setResetOtpFeedback(message);
+    }
+  };
+
   const handleVerifyEmailChange = async (event) => {
     if (event) {
       event.preventDefault();
@@ -982,7 +1107,115 @@ const Account = () => {
                   Update your password in a dedicated space. Enter your current
                   password, choose a new one, and confirm the change.
                 </p>
+                <div className="account-password__cta">
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    onClick={handleRequestAccountPasswordReset}
+                    disabled={resetEmailStatus === "loading"}
+                  >
+                    {resetEmailStatus === "loading"
+                      ? "Sending code..."
+                      : "Reset password"}
+                  </button>
+                  {resetEmailFeedback && (
+                    <p
+                      className={`form-feedback${
+                        resetEmailStatus === "error"
+                          ? " form-feedback--error"
+                          : " form-feedback--success"
+                      }`}
+                    >
+                      {resetEmailFeedback}
+                    </p>
+                  )}
+                </div>
               </div>
+              {resetOtpVisible && (
+                <form
+                  className="account-form account-form--password account-form--otp"
+                  onSubmit={handleAccountOtpResetSubmit}
+                >
+                  <div className="input-group">
+                    <span>Verification Code</span>
+                    <input
+                      id="account-reset-otp"
+                      name="accountResetOtp"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={6}
+                      value={resetOtpValue}
+                      onChange={(event) =>
+                        setResetOtpValue(event.target.value.replace(/\D/g, ""))
+                      }
+                      placeholder="------"
+                      required
+                    />
+                  </div>
+                  <div className="input-group">
+                    <span>New Password</span>
+                    <input
+                      id="account-reset-new-password"
+                      name="accountResetNewPassword"
+                      type="password"
+                      value={resetNewPassword}
+                      onChange={(event) =>
+                        setResetNewPassword(event.target.value)
+                      }
+                      autoComplete="new-password"
+                      placeholder="Create a new password"
+                      required
+                    />
+                  </div>
+                  <div className="input-group">
+                    <span>Confirm New Password</span>
+                    <input
+                      id="account-reset-confirm-password"
+                      name="accountResetConfirmPassword"
+                      type="password"
+                      value={resetConfirmNewPassword}
+                      onChange={(event) =>
+                        setResetConfirmNewPassword(event.target.value)
+                      }
+                      autoComplete="new-password"
+                      placeholder="Type the new password again"
+                      required
+                    />
+                  </div>
+                  <div className="account-actions">
+                    <button
+                      type="submit"
+                      className="button button--gradient"
+                      disabled={resetOtpStatus === "loading"}
+                    >
+                      {resetOtpStatus === "loading"
+                        ? "Resetting..."
+                        : "Confirm Reset"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--outline"
+                      onClick={handleRequestAccountPasswordReset}
+                      disabled={resetEmailStatus === "loading"}
+                    >
+                      {resetEmailStatus === "loading"
+                        ? "Resending..."
+                        : "Resend code"}
+                    </button>
+                  </div>
+                  {resetOtpFeedback && (
+                    <p
+                      className={`form-feedback${
+                        resetOtpStatus === "error"
+                          ? " form-feedback--error"
+                          : " form-feedback--success"
+                      }`}
+                    >
+                      {resetOtpFeedback}
+                    </p>
+                  )}
+                </form>
+              )}
               <form
                 className="account-form account-form--password"
                 onSubmit={handlePasswordSubmit}

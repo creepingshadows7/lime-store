@@ -1,1 +1,1 @@
-v1.11.1 Users can reset their password from the login page with OTP email verification
+v1.11.2 Users can reset their password from the account page with OTP email verification
