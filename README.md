@@ -1,1 +1,1 @@
-v2.0.10 Preparations for hosting with Railway
+v2.0.11 Fixes for database
