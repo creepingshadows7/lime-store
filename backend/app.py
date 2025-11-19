@@ -78,13 +78,11 @@ def create_app() -> Flask:
 
     # --- Initialize extensions ---
     CORS(
-        app,
-        resources={
-            r"/api/*": {"origins": "*"},
-            "/forgot-password": {"origins": "*"},
-            "/reset-password": {"origins": "*"},
-        },
-    )
+    app,
+    resources={r"/*": {"origins": "*"}},
+    supports_credentials=True
+)
+
     JWTManager(app)
     mongo = PyMongo(app)
     db = mongo.db
