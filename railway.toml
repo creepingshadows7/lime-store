@@ -1,5 +1,0 @@
-[build]
-buildpacks = ["paketo-buildpacks/python"]
-
-[start]
-command = "gunicorn backend.app:app"
