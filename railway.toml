@@ -1,4 +1,5 @@
 [build]
-buildCommand = "pip install -r backend/requirements.txt"
-startCommand = "gunicorn backend.app:app"
+buildpacks = ["paketo-buildpacks/python"]
 
+[start]
+command = "gunicorn backend.app:app"
