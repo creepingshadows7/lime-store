@@ -1,1 +1,1 @@
-v2.0.1 Preparations for hosting with Railway
+v2.0.2 TOML Preparations for hosting with Railway

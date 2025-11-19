@@ -1,0 +1,3 @@
+[build]
+builder = "paketobuildpacks/builder:base"
+buildpacks = ["paketo-buildpacks/python"]
