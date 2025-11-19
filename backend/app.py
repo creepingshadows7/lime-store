@@ -3463,6 +3463,12 @@ def create_app() -> Flask:
     return app
 
 
+@app.route("/health")
+def health():
+    return {"status": "ok"}, 200
+
+
+
 app = create_app()
 
 if __name__ == "__main__":
