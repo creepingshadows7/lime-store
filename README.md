@@ -1,1 +1,1 @@
-v2.0 UI Overhaul and preparation for domain hosting
+v2.0.1 Preparations for hosting with Railway

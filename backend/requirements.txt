@@ -5,3 +5,4 @@ Flask-PyMongo==2.3.0
 bcrypt==4.1.2
 python-dotenv==1.0.1
 resend==2.19.0
+gunicorn==22.0.0
