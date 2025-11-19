@@ -1,8 +1,11 @@
 {
   "build": {
-    "builder": "NIXPACKS"
+    "builder": "NIXPACKS",
+    "nixpacksExtraPaths": [
+      "backend"
+    ]
   },
   "deploy": {
-    "startCommand": "gunicorn backend.app:app"
+    "startCommand": "cd backend && gunicorn app:app"
   }
 }
