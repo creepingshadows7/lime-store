@@ -77,11 +77,8 @@ def create_app() -> Flask:
     app.config["PRODUCT_ALLOWED_EXTENSIONS"] = {"png", "jpg", "jpeg", "gif", "webp"}
 
     # --- Initialize extensions ---
-    CORS(
-    app,
-    resources={r"/*": {"origins": "*"}},
-    supports_credentials=True
-)
+    CORS(app, supports_credentials=True)
+
 
     JWTManager(app)
     mongo = PyMongo(app)
