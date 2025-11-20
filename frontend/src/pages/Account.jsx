@@ -681,7 +681,7 @@ const Account = () => {
     setResetEmailFeedback("");
 
     try {
-      await apiClient.post("/forgot-password", {
+      await apiClient.post("/api/request-reset", {
         email: resolvedAccountEmail,
       });
       setResetEmailStatus("success");
@@ -730,7 +730,7 @@ const Account = () => {
     setResetOtpFeedback("");
 
     try {
-      await apiClient.post("/reset-password", {
+      await apiClient.post("/api/reset-password", {
         email: resolvedAccountEmail,
         otp: code,
         new_password: nextPassword,

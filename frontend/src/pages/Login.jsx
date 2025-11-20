@@ -29,7 +29,7 @@ const Login = () => {
 
   const triggerVerificationEmail = async (normalizedEmail) => {
     try {
-      const { data } = await apiClient.post("/api/send-otp", {
+      const { data } = await apiClient.post("/api/resend-code", {
         email: normalizedEmail,
       });
 
@@ -103,7 +103,7 @@ const Login = () => {
     setOtpMessage("");
 
     try {
-      await apiClient.post("/api/verify-otp", {
+      await apiClient.post("/api/verify-email", {
         email: pendingEmail,
         otp: otpCode.trim(),
       });
@@ -182,7 +182,7 @@ const Login = () => {
     setForgotStatus("loading");
     setForgotMessage("");
     try {
-      await apiClient.post("/forgot-password", { email: normalizedEmail });
+      await apiClient.post("/api/request-reset", { email: normalizedEmail });
       setPasswordResetEmail(normalizedEmail);
       setResetOtp("");
       setResetNewPassword("");
@@ -218,7 +218,7 @@ const Login = () => {
     setResetMessage("");
 
     try {
-      await apiClient.post("/reset-password", {
+      await apiClient.post("/api/reset-password", {
         email: normalizedEmail,
         otp: resetOtp.trim(),
         new_password: resetNewPassword,

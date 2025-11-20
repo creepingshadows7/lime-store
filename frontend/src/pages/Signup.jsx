@@ -103,7 +103,7 @@ const Signup = () => {
     setOtpMessage("");
 
     try {
-      await apiClient.post("/api/verify-otp", {
+      await apiClient.post("/api/verify-email", {
         email: pendingEmail,
         otp: otpCode.trim(),
       });
@@ -140,7 +140,7 @@ const Signup = () => {
     setOtpMessage("");
 
     try {
-      await apiClient.post("/api/send-otp", { email: pendingEmail });
+      await apiClient.post("/api/resend-code", { email: pendingEmail });
       setResendStatus("success");
       setOtpMessage("Sent! Check your inbox for the latest code.");
     } catch (err) {
