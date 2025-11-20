@@ -65,16 +65,16 @@ def create_app() -> Flask:
     max_upload_mb = int(os.getenv("MAX_UPLOAD_SIZE_MB", "16"))
     app.config["MAX_CONTENT_LENGTH"] = max_upload_mb * 1024 * 1024
 
-    upload_directory = os.getenv("PRODUCT_UPLOAD_FOLDER")
-    if upload_directory:
-        upload_directory = os.path.abspath(upload_directory)
-    else:
-        upload_directory = os.path.join(app.root_path, "uploads")
+    # Always store product images inside backend/uploads
+    upload_directory = os.path.join(app.root_path, "uploads")
 
+# Create the folder if it doesn't exist
     os.makedirs(upload_directory, exist_ok=True)
 
+# Configure Flask to use this as the storage location
     app.config["PRODUCT_UPLOAD_FOLDER"] = upload_directory
     app.config["PRODUCT_ALLOWED_EXTENSIONS"] = {"png", "jpg", "jpeg", "gif", "webp"}
+
 
     # --- Initialize extensions ---
     CORS(app, supports_credentials=True)
