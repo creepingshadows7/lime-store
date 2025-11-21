@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
@@ -33,7 +33,8 @@ const profileHasAddress = (profile) => {
 
 const Checkout = () => {
   const { isAuthenticated, profile, login } = useAuth();
-  const { items, subtotal, totalItems, clearCart } = useCart();
+  const { items, subtotal, totalItems } = useCart();
+  const navigate = useNavigate();
   const [contactValues, setContactValues] = useState(() => buildContactState(profile));
   const [addressValues, setAddressValues] = useState(() => buildAddressState(profile));
   const [saveAddress, setSaveAddress] = useState(
@@ -143,12 +144,12 @@ const Checkout = () => {
       if (isAuthenticated && data?.access_token && data?.user) {
         login(data.access_token, data.user);
       }
-      clearCart();
       setStatus("success");
       setFeedback(
         data?.message ??
           "Delivery details confirmed. Continue to payment to place your order."
       );
+      navigate("/payment");
     } catch (error) {
       const message =
         error.response?.data?.message ??

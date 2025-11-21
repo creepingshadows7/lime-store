@@ -9,6 +9,9 @@ import ProductEdit from "./pages/ProductEdit";
 import Signup from "./pages/Signup";
 import Admin from "./pages/Admin";
 import Checkout from "./pages/Checkout";
+import PaymentPage from "./pages/PaymentPage";
+import PaymentCancelPage from "./pages/PaymentCancelPage";
+import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import "./App.css";
 import { useAuth } from "./context/AuthContext";
 import { DEFAULT_ADMIN_EMAIL } from "./constants";
@@ -123,6 +126,9 @@ const App = () => {
           <Route path="/signup" element={<Signup />} />
           <Route path="/cart" element={<Cart />} />
           <Route path="/checkout" element={<Checkout />} />
+          <Route path="/payment" element={<PaymentPage />} />
+          <Route path="/payment/success" element={<PaymentSuccessPage />} />
+          <Route path="/payment/cancel" element={<PaymentCancelPage />} />
           <Route path="/account" element={<Account />} />
           <Route path="/admin" element={<Admin />} />
         </Routes>

@@ -3,6 +3,8 @@ import math
 import os
 import re
 import secrets
+import requests
+
 import unicodedata
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set, Tuple
@@ -2982,6 +2984,58 @@ def create_app() -> Flask:
                 "product_counts": normalized_counts,
             }
         )
+
+    # ---- SumUp Payment Integration ----
+
+    # ---- SumUp Payment Integration ----
+
+    # ---- SumUp Payment Integration ----
+
+    @app.route("/api/payments/sumup/create_checkout", methods=["POST"])
+    def sumup_create_checkout():
+        data = request.json or {}
+
+        amount = data.get("amount")
+
+        if amount is None:
+            return jsonify({"error": "Amount is required"}), 400
+
+        headers = {
+            "Authorization": f"Bearer {os.getenv('SUMUP_SECRET_KEY_TEST')}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "checkout_reference": "order_" + os.urandom(4).hex(),
+            "amount": float(amount),
+            "currency": "EUR",
+            "pay_to_email": "lumite@abv.bg",
+            "description": "Lime Store Order",
+            "redirect_url": "http://localhost:5173/payment/success"
+        }
+
+        response = requests.post(
+            "https://api.sumup.com/v0.1/checkouts",
+            json=payload,
+            headers=headers
+        )
+
+        print("SUMUP RESPONSE:", response.text)
+
+        if response.status_code != 201:
+            return jsonify({"error": response.text}), response.status_code
+
+        checkout = response.json()
+        checkout_id = checkout.get("id")
+
+        return jsonify({"checkout_id": checkout_id}), 200
+
+
+
+
+
+
+
 
     # Checkout
     @app.route("/api/checkout", methods=["POST"])
