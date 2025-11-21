@@ -1,1 +1,1 @@
-v2.1.0 Production Site ready
+vB2.2.1 Testing SumUp payments, sandbox ready

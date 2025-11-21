@@ -40,6 +40,7 @@ _resend_verify_new_email_api_key = (
 _resend_password_reset_api_key = (
     os.getenv("RESEND_PASSWORD_RESET_API_KEY") or ""
 ).strip()
+_resend_new_order_email_api_key = (os.getenv("RESEND_NEW_ORDER_PLACED") or "").strip()
 if _resend_new_user_api_key:
     resend.api_key = _resend_new_user_api_key
 
@@ -449,6 +450,75 @@ def create_app() -> Flask:
             "text": text_body,
         }
         return send_email_via_resend(payload, _resend_password_reset_api_key)
+
+    def normalize_order_email_items(items: List[Dict]) -> List[Dict]:
+        normalized_items: List[Dict] = []
+        for entry in items or []:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "").strip() or "Item"
+            quantity = safe_positive_int(entry.get("quantity"), 1) or 1
+            price_value = round(safe_float(entry.get("price"), 0.0), 2)
+            normalized_items.append(
+                {
+                    "name": name,
+                    "quantity": quantity,
+                    "price": price_value,
+                    "line_total": round(price_value * quantity, 2),
+                }
+            )
+        return normalized_items
+
+    def send_order_confirmation_email(
+        order_document: Dict[str, object], recipient_email: str
+    ) -> Tuple[bool, Optional[str]]:
+        normalized_email = normalize_email(recipient_email)
+        if not normalized_email:
+            return False, "Missing customer email for the order receipt."
+
+        normalized_items = normalize_order_email_items(order_document.get("items"))
+        calculated_total = sum(item["line_total"] for item in normalized_items)
+        total_value = round(
+            safe_float(order_document.get("total"), calculated_total), 2
+        )
+        currency_code = str(order_document.get("currency") or "EUR").upper()
+        order_identifier = (
+            str(order_document.get("order_id") or order_document.get("_id") or "")
+        ).strip() or "Order"
+
+        created_at_value = order_document.get("created_at")
+        if not isinstance(created_at_value, datetime):
+            created_at_value = datetime.utcnow()
+
+        html_body = render_template(
+            "emails/new_order_email.html",
+            order_id=order_identifier,
+            items=normalized_items,
+            total=total_value,
+            currency=currency_code,
+            created_at=created_at_value,
+        )
+        item_lines = ", ".join(
+            f"{item['name']} x{item['quantity']} ({currency_code} {item['price']:.2f})"
+            for item in normalized_items
+        )
+        text_body = (
+            f"Thank you for your purchase! Order {order_identifier} on "
+            f"{created_at_value.strftime('%Y-%m-%d %H:%M')}.\n"
+            f"Items: {item_lines}.\n"
+            f"Total: {currency_code} {total_value:.2f}.\n\n"
+            "Lime Store Team"
+        )
+
+        payload: Dict[str, object] = {
+            "from": "Lime Store <orders@limeshop.store>",
+            "to": [normalized_email],
+            "subject": "Thank you for your Purchase",
+            "html": html_body,
+            "text": text_body,
+        }
+
+        return send_email_via_resend(payload, _resend_new_order_email_api_key)
 
     def dispatch_verification_code(email: str):
         otp = generate_otp_code()
@@ -1558,6 +1628,143 @@ def create_app() -> Flask:
             "customer": serialized_customer,
             "shippingAddress": shipping_address,
         }
+
+    def serialize_payment_order(order_document, include_customer: bool = True):
+        if not order_document:
+            return None
+
+        order_primary_id = order_document.get("_id")
+        order_identifier = (
+            str(
+                order_document.get("order_id")
+                or order_document.get("orderNumber")
+                or order_primary_id
+                or ""
+            ).strip()
+        )
+        if not order_identifier and isinstance(order_primary_id, ObjectId):
+            order_identifier = str(order_primary_id)
+
+        created_at = order_document.get("created_at")
+        if not isinstance(created_at, datetime) and isinstance(order_primary_id, ObjectId):
+            try:
+                created_at = order_primary_id.generation_time
+            except Exception:
+                created_at = None
+        created_at_iso = None
+        if isinstance(created_at, datetime):
+            created_at_iso = (
+                created_at.isoformat()
+                if created_at.tzinfo is not None
+                else f"{created_at.isoformat()}Z"
+            )
+
+        serialized_items = []
+        for entry in order_document.get("items") or []:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "").strip() or "Item"
+            quantity = safe_positive_int(entry.get("quantity"), 1) or 1
+            price_value = round(safe_float(entry.get("price"), 0.0), 2)
+            serialized_items.append(
+                {
+                    "name": name,
+                    "quantity": quantity,
+                    "price": price_value,
+                    "lineTotal": round(price_value * quantity, 2),
+                    "productId": str(
+                        entry.get("product_id")
+                        or entry.get("productId")
+                        or entry.get("id")
+                        or ""
+                    ).strip(),
+                    "variationId": str(
+                        entry.get("variation_id") or entry.get("variationId") or ""
+                    ).strip(),
+                    "variationName": str(
+                        entry.get("variation_name") or entry.get("variationName") or ""
+                    ).strip(),
+                    "imageUrl": str(
+                        entry.get("imageUrl") or entry.get("image_url") or ""
+                    ).strip(),
+                }
+            )
+
+        if not serialized_items:
+            return None
+
+        line_total_sum = sum(item["lineTotal"] for item in serialized_items)
+        total_value = round(safe_float(order_document.get("total"), line_total_sum), 2)
+        currency_code = (
+            str(order_document.get("currency") or "EUR").strip().upper() or "EUR"
+        )
+        payment_status = (
+            str(order_document.get("payment_status") or order_document.get("status") or "")
+            .strip()
+            .lower()
+            or ("paid" if total_value else "pending")
+        )
+        customer_name = str(
+            order_document.get("customer_name")
+            or (order_document.get("customer") or {}).get("name")
+            or ""
+        ).strip()
+        customer_email = normalize_email(
+            order_document.get("email")
+            or (order_document.get("customer") or {}).get("email")
+            or order_document.get("user")
+        )
+        stored_user_id = order_document.get("user_id") or order_document.get("userId")
+        if isinstance(stored_user_id, ObjectId):
+            stored_user_id = str(stored_user_id)
+        else:
+            stored_user_id = str(stored_user_id or "").strip()
+
+        return {
+            "id": str(order_primary_id) if order_primary_id else "",
+            "orderId": order_identifier or (str(order_primary_id) if order_primary_id else ""),
+            "items": serialized_items,
+            "itemCount": sum(item["quantity"] for item in serialized_items),
+            "total": total_value,
+            "currency": currency_code,
+            "paymentStatus": payment_status,
+            "createdAt": created_at_iso,
+            "customerEmail": customer_email if include_customer else "",
+            "customerName": customer_name if include_customer else "",
+            "userId": stored_user_id if include_customer else "",
+            "checkoutId": str(order_document.get("checkout_id") or "").strip(),
+        }
+
+    def order_matches_user(order_document, email: Optional[str], user_id: Optional[str]) -> bool:
+        if not order_document:
+            return False
+
+        normalized_email = normalize_email(email)
+        normalized_user_id = str(user_id or "").strip()
+        possible_emails: List[str] = []
+        for candidate in [
+            order_document.get("email"),
+            order_document.get("user"),
+            (order_document.get("customer") or {}).get("email"),
+        ]:
+            normalized_candidate = normalize_email(candidate)
+            if normalized_candidate:
+                possible_emails.append(normalized_candidate)
+
+        if normalized_email and normalized_email in possible_emails:
+            return True
+
+        stored_user_id = order_document.get("user_id") or order_document.get("userId")
+        if isinstance(stored_user_id, ObjectId):
+            stored_user_id = str(stored_user_id)
+        elif stored_user_id is not None:
+            stored_user_id = str(stored_user_id)
+
+        return bool(
+            normalized_user_id
+            and stored_user_id
+            and str(stored_user_id).strip() == normalized_user_id
+        )
     def fetch_product(product_id: str):
         try:
             object_id = ObjectId(product_id)
@@ -2996,17 +3203,19 @@ def create_app() -> Flask:
         data = request.json or {}
 
         amount = data.get("amount")
+        provided_order_id = str(data.get("orderId") or "").strip()
 
         if amount is None:
             return jsonify({"error": "Amount is required"}), 400
 
+        order_identifier = provided_order_id or f"LIME-{uuid4().hex[:8].upper()}"
         headers = {
             "Authorization": f"Bearer {os.getenv('SUMUP_SECRET_KEY_TEST')}",
             "Content-Type": "application/json"
         }
 
         payload = {
-            "checkout_reference": "order_" + os.urandom(4).hex(),
+            "checkout_reference": order_identifier,
             "amount": float(amount),
             "currency": "EUR",
             "pay_to_email": "lumite@abv.bg",
@@ -3028,7 +3237,7 @@ def create_app() -> Flask:
         checkout = response.json()
         checkout_id = checkout.get("id")
 
-        return jsonify({"checkout_id": checkout_id}), 200
+        return jsonify({"checkout_id": checkout_id, "order_id": order_identifier}), 200
 
 
 
@@ -3134,10 +3343,14 @@ def create_app() -> Flask:
             "items": normalized_items,
             "created_at": datetime.utcnow(),
             "order_number": order_number,
+            "order_id": order_number,
             "subtotal": totals["subtotal"],
+            "total": totals["subtotal"],
             "total_items": totals["total_items"],
             "customer": customer_entry,
             "shipping_address": delivery_address,
+            "currency": "EUR",
+            "payment_status": "pending",
         }
 
         if current_user_email:
@@ -3183,21 +3396,265 @@ def create_app() -> Flask:
 
         return jsonify(response_payload)
 
+    @app.route("/api/orders/create", methods=["POST"])
+    def create_paid_order():
+        verify_jwt_in_request(optional=True)
+        current_user_email = normalize_email(get_jwt_identity())
+        user_document = (
+            db.users.find_one({"email": current_user_email})
+            if current_user_email
+            else None
+        )
+        user_identifier = (
+            str(user_document.get("_id"))
+            if user_document and user_document.get("_id")
+            else ""
+        )
+
+        payload = request.get_json(silent=True) or {}
+        raw_items = payload.get("items") or []
+
+        if not isinstance(raw_items, list) or not raw_items:
+            return (
+                jsonify(
+                    {"message": "Include at least one purchased item to record the order."}
+                ),
+                400,
+            )
+
+        normalized_items = []
+        for entry in raw_items:
+            normalized_entry = normalize_order_item(entry)
+            if normalized_entry:
+                normalized_items.append(normalized_entry)
+                continue
+
+            fallback_name = str(entry.get("name") or "").strip() or "Item"
+            normalized_items.append(
+                {
+                    "product_id": str(
+                        entry.get("product_id")
+                        or entry.get("productId")
+                        or entry.get("id")
+                        or ""
+                    ).strip(),
+                    "quantity": safe_positive_int(entry.get("quantity"), 1) or 1,
+                    "name": fallback_name,
+                    "price": round(safe_float(entry.get("price"), 0.0), 2),
+                    "image_url": str(
+                        entry.get("imageUrl") or entry.get("image_url") or ""
+                    ).strip(),
+                    "variation_id": str(
+                        entry.get("variation_id")
+                        or entry.get("variationId")
+                        or entry.get("selectedVariationId")
+                        or ""
+                    ).strip(),
+                    "variation_name": str(
+                        entry.get("variation_name")
+                        or entry.get("variationName")
+                        or ""
+                    ).strip(),
+                }
+            )
+
+        if not normalized_items:
+            return (
+                jsonify(
+                    {
+                        "message": "Include item details (name, quantity, price) to store the order."
+                    }
+                ),
+                400,
+            )
+
+        calculated_total = round(
+            sum(
+                safe_float(item.get("price"), 0.0)
+                * safe_positive_int(item.get("quantity"), 1)
+                for item in normalized_items
+            ),
+            2,
+        )
+        provided_total = round(safe_float(payload.get("total"), calculated_total), 2)
+        total_value = calculated_total or provided_total
+        if calculated_total and provided_total and not math.isclose(
+            calculated_total, provided_total, rel_tol=0.01, abs_tol=0.05
+        ):
+            total_value = calculated_total
+
+        order_identifier = (
+            str(
+                payload.get("orderId")
+                or payload.get("order_id")
+                or payload.get("checkout_reference")
+                or ""
+            ).strip()
+        )
+        if not order_identifier:
+            order_identifier = f"LIME-{uuid4().hex[:10].upper()}"
+
+        checkout_reference = str(
+            payload.get("checkoutId") or payload.get("checkout_id") or ""
+        ).strip()
+        currency_code = (
+            str(payload.get("currency") or "EUR").strip().upper() or "EUR"
+        )
+
+        customer_email = normalize_email(
+            payload.get("email")
+            or payload.get("customer_email")
+            or payload.get("customerEmail")
+            or current_user_email
+        )
+        customer_name = str(
+            payload.get("name")
+            or payload.get("customer_name")
+            or payload.get("customerName")
+            or (user_document.get("name") if user_document else "")
+            or ""
+        ).strip()
+
+        existing_order = db.orders.find_one({"order_id": order_identifier})
+        if existing_order:
+            serialized_existing = serialize_payment_order(existing_order)
+            return jsonify({"message": "Order already recorded.", "order": serialized_existing})
+
+        order_document = {
+            "order_id": order_identifier,
+            "checkout_id": checkout_reference,
+            "items": normalized_items,
+            "total": total_value if total_value is not None else 0,
+            "currency": currency_code,
+            "payment_status": "paid",
+            "created_at": datetime.utcnow(),
+            "email": customer_email,
+            "customer_name": customer_name,
+        }
+        if user_identifier:
+            order_document["user_id"] = user_identifier
+        if current_user_email:
+            order_document["user"] = current_user_email
+
+        insert_result = db.orders.insert_one(order_document)
+        order_document["_id"] = insert_result.inserted_id
+
+        email_sent = False
+        email_error = None
+        if customer_email:
+            email_sent, email_error = send_order_confirmation_email(
+                order_document, customer_email
+            )
+
+        record_audit_log(
+            current_user_email or customer_email,
+            "Recorded paid order",
+            {
+                "order_id": order_identifier,
+                "total": str(total_value),
+                "currency": currency_code,
+            },
+        )
+
+        serialized_order = serialize_payment_order(order_document)
+        response_payload = {
+            "message": "Order saved successfully.",
+            "order": serialized_order,
+            "email_sent": email_sent,
+        }
+        if email_error:
+            response_payload["email_error"] = email_error
+        return jsonify(response_payload)
+
     @app.route("/api/orders", methods=["GET"])
+    @app.route("/api/orders/user", methods=["GET"])
     @jwt_required()
     def list_orders():
-        current_user = get_jwt_identity()
-        cursor = (
-            db.orders.find({"user": current_user})
-            .sort([("created_at", -1), ("_id", -1)])
-            .limit(25)
+        current_email = normalize_email(get_jwt_identity())
+        user_document = (
+            db.users.find_one({"email": current_email}) if current_email else None
         )
+        user_identifier = (
+            str(user_document.get("_id"))
+            if user_document and user_document.get("_id")
+            else ""
+        )
+
+        ownership_filter: Dict[str, object] = {
+            "$or": [
+                {"email": current_email},
+                {"user": current_email},
+                {"customer.email": current_email},
+            ]
+        }
+        if user_identifier:
+            ownership_filter["$or"].append({"user_id": user_identifier})
+
+        query = {
+            "$and": [
+                ownership_filter,
+                {"payment_status": {"$in": ["paid", "captured"]}},
+            ]
+        }
+
+        cursor = db.orders.find(query).sort([("created_at", -1), ("_id", -1)])
         orders = []
         for document in cursor:
-            serialized = serialize_order(document)
+            serialized = serialize_payment_order(document)
             if serialized:
                 orders.append(serialized)
         return jsonify({"orders": orders})
+
+    @app.route("/api/orders/all", methods=["GET"])
+    @jwt_required()
+    def list_all_orders():
+        _, admin_error = require_admin_user()
+        if admin_error:
+            return admin_error
+
+        cursor = db.orders.find().sort([("created_at", -1), ("_id", -1)])
+        orders = []
+        for document in cursor:
+            serialized = serialize_payment_order(document)
+            if serialized:
+                orders.append(serialized)
+        return jsonify({"orders": orders})
+
+    @app.route("/api/orders/<order_identifier>", methods=["GET"])
+    def get_order_detail(order_identifier: str):
+        verify_jwt_in_request(optional=True)
+        current_email = normalize_email(get_jwt_identity())
+        user_document = (
+            db.users.find_one({"email": current_email}) if current_email else None
+        )
+        user_identifier = (
+            str(user_document.get("_id"))
+            if user_document and user_document.get("_id")
+            else ""
+        )
+        user_role = get_user_role(user_document) if user_document else "standard"
+        is_admin = user_role == "admin"
+
+        order_document = db.orders.find_one({"order_id": order_identifier})
+        if not order_document:
+            try:
+                possible_object_id = ObjectId(order_identifier)
+                order_document = db.orders.find_one({"_id": possible_object_id})
+            except (InvalidId, TypeError):
+                order_document = None
+        if not order_document:
+            return jsonify({"message": "Order not found."}), 404
+
+        include_sensitive = is_admin or order_matches_user(
+            order_document, current_email, user_identifier
+        )
+        serialized = serialize_payment_order(
+            order_document, include_customer=include_sensitive
+        )
+        if not serialized:
+            return jsonify({"message": "Order could not be loaded."}), 404
+
+        return jsonify({"order": serialized})
 
     # --- Admin Routes ---
 

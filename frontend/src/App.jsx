@@ -12,6 +12,10 @@ import Checkout from "./pages/Checkout";
 import PaymentPage from "./pages/PaymentPage";
 import PaymentCancelPage from "./pages/PaymentCancelPage";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
+import MyOrders from "./pages/MyOrders";
+import MyOrderDetail from "./pages/MyOrderDetail";
+import AdminOrders from "./pages/AdminOrders";
+import AdminOrderDetail from "./pages/AdminOrderDetail";
 import "./App.css";
 import { useAuth } from "./context/AuthContext";
 import { DEFAULT_ADMIN_EMAIL } from "./constants";
@@ -32,6 +36,7 @@ const App = () => {
     { to: "/", label: "Home" },
     { to: "/products", label: "Products" },
     { to: "/cart", label: "Cart" },
+    { to: "/my-orders", label: "My Orders", authOnly: true },
     { to: "/account", label: "Account", authOnly: true },
   ];
 
@@ -129,8 +134,12 @@ const App = () => {
           <Route path="/payment" element={<PaymentPage />} />
           <Route path="/payment/success" element={<PaymentSuccessPage />} />
           <Route path="/payment/cancel" element={<PaymentCancelPage />} />
+          <Route path="/my-orders" element={<MyOrders />} />
+          <Route path="/my-orders/:orderId" element={<MyOrderDetail />} />
           <Route path="/account" element={<Account />} />
           <Route path="/admin" element={<Admin />} />
+          <Route path="/admin/orders" element={<AdminOrders />} />
+          <Route path="/admin/orders/:orderId" element={<AdminOrderDetail />} />
         </Routes>
       </main>
       <footer className="lux-footer">

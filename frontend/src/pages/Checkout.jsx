@@ -149,6 +149,18 @@ const Checkout = () => {
         data?.message ??
           "Delivery details confirmed. Continue to payment to place your order."
       );
+      try {
+        window.localStorage.setItem(
+          "limeCheckoutContact",
+          JSON.stringify(validation.contact)
+        );
+        window.localStorage.setItem(
+          "limeCheckoutAddress",
+          JSON.stringify(validation.address)
+        );
+      } catch {
+        // Ignore persistence errors.
+      }
       navigate("/payment");
     } catch (error) {
       const message =

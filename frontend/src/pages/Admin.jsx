@@ -648,6 +648,13 @@ const Admin = () => {
             {tab.label}
           </button>
         ))}
+        <button
+          type="button"
+          className="admin-tab"
+          onClick={() => navigate("/admin/orders")}
+        >
+          Orders
+        </button>
       </div>
       {activeTab === "members" ? (
         <div className="admin-page__card">

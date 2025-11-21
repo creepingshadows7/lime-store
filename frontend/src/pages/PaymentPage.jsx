@@ -1,16 +1,38 @@
-import { useMemo, useState } from "react";
-import axios from "axios";
-import { Link } from "react-router-dom";
+import { useCallback, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import apiClient from "../api/client";
+import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
 import { formatEuro } from "../utils/currency";
 
+const loadStoredContact = () => {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const rawValue = window.localStorage.getItem("limeCheckoutContact");
+    if (!rawValue) {
+      return {};
+    }
+    const parsed = JSON.parse(rawValue);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
 const PaymentPage = () => {
+  const navigate = useNavigate();
+  const { profile } = useAuth();
   const { items, subtotal, totalItems } = useCart();
   const [billingSameAsDelivery, setBillingSameAsDelivery] = useState(true);
   const [isPaying, setIsPaying] = useState(false);
   const [paymentError, setPaymentError] = useState(null);
+  const [checkoutId, setCheckoutId] = useState("");
+  const [orderTrackingId, setOrderTrackingId] = useState("");
 
-  // Calculate values
+  const storedContact = useMemo(() => loadStoredContact(), []);
+
   const shippingAmount = useMemo(
     () => (items.length > 0 ? 4.95 : 0),
     [items.length]
@@ -19,48 +41,142 @@ const PaymentPage = () => {
   const subtotalValue = Number.isFinite(subtotal) ? subtotal : 0;
   const total = subtotalValue + shippingAmount;
 
+  const orderItems = useMemo(() => {
+    const mapped = items.map((item) => ({
+      id: item.id,
+      productId: item.id,
+      quantity: item.quantity,
+      name: item.name,
+      price: item.price,
+      variationId: item.variationId,
+      variationName: item.variationName,
+      imageUrl: item.imageUrl,
+    }));
+
+    if (shippingAmount) {
+      mapped.push({
+        id: "shipping",
+        productId: "shipping",
+        quantity: 1,
+        name: "Shipping",
+        price: shippingAmount,
+      });
+    }
+
+    return mapped;
+  }, [items, shippingAmount]);
+
+  const customerName =
+    (profile?.name && profile.name.trim()) ||
+    (storedContact.name && storedContact.name.trim()) ||
+    "Web Customer";
+  const customerEmail =
+    (profile?.email && profile.email.trim()) ||
+    (storedContact.email && storedContact.email.trim()) ||
+    "";
+
+  const cartSubtotalLabel = formatEuro(subtotalValue);
+  const shippingLabel = shippingAmount ? formatEuro(shippingAmount) : "Free";
+  const totalLabel = formatEuro(total);
+
+  const finalizeOrder = useCallback(
+    async (nextCheckoutId, nextOrderId) => {
+      setPaymentError(null);
+      setIsPaying(true);
+
+      try {
+        const payload = {
+          checkoutId: nextCheckoutId,
+          orderId: nextOrderId,
+          items: orderItems,
+          total,
+          currency: "EUR",
+          email: customerEmail || undefined,
+          name: customerName,
+        };
+        const { data } = await apiClient.post("/api/orders/create", payload);
+        const persistedOrder =
+          data?.order?.orderId || data?.order?.id || nextOrderId || nextCheckoutId;
+
+        try {
+          window.localStorage.removeItem("limeCheckoutContact");
+          window.localStorage.removeItem("limeCheckoutAddress");
+        } catch {
+          // Ignore storage clean-up errors.
+        }
+
+        const targetOrderId = persistedOrder || nextOrderId || nextCheckoutId;
+        navigate(
+          `/payment/success?orderId=${encodeURIComponent(targetOrderId)}`,
+          {
+            replace: true,
+            state: { orderId: targetOrderId, order: data?.order },
+          }
+        );
+      } catch (error) {
+        const message =
+          error.response?.data?.message ??
+          "We could not confirm your order yet. Please contact support if this persists.";
+        setPaymentError(message);
+      } finally {
+        setIsPaying(false);
+      }
+    },
+    [customerEmail, customerName, navigate, orderItems, total]
+  );
+
   // --- HANDLE PAYMENT ---
   const handlePayNow = async () => {
+    if (!orderItems.length) {
+      setPaymentError("Your cart is empty. Add items before paying.");
+      return;
+    }
+
     try {
       setIsPaying(true);
       setPaymentError(null);
 
-      // Prevent duplicate mounts
       const widgetContainer = document.getElementById("sumup-card");
-      widgetContainer.innerHTML = "";
+      if (widgetContainer) {
+        widgetContainer.innerHTML = "";
+      }
 
-      // 1️⃣ Create checkout in backend
-      const res = await axios.post(
-        `${import.meta.env.VITE_API_URL}/api/payments/sumup/create_checkout`,
+      const { data } = await apiClient.post(
+        "/api/payments/sumup/create_checkout",
         {
           amount: total,
-          email: "customer@example.com", // Replace later with real data
-          name: "Web Customer",
+          currency: "EUR",
+          orderId: orderTrackingId || undefined,
+          email: customerEmail,
+          name: customerName,
         }
       );
 
-      const checkoutId = res.data.checkout_id;
+      const checkoutIdValue = data?.checkout_id;
+      const orderIdentifier =
+        data?.order_id || data?.orderId || orderTrackingId || checkoutIdValue;
 
-      if (!checkoutId) {
+      if (!checkoutIdValue) {
         setPaymentError("No checkout ID returned from the server.");
+        setIsPaying(false);
         return;
       }
 
-      // 2️⃣ Ensure SumUp widget loaded
+      setCheckoutId(checkoutIdValue);
+      setOrderTrackingId(orderIdentifier);
+
       if (!window.SumUpCard) {
         setPaymentError("Could not load SumUp payment widget.");
+        setIsPaying(false);
         return;
       }
 
-      // 3️⃣ Mount widget
       window.SumUpCard.mount({
         id: "sumup-card",
-        checkoutId,
+        checkoutId: checkoutIdValue,
         onResponse: (type, body) => {
-          console.log("SUMUP RESPONSE:", type, body);
-
           if (type === "success") {
-            window.location.href = "/payment/success";
+            finalizeOrder(checkoutIdValue, orderIdentifier);
             return;
           }
 
@@ -71,20 +187,17 @@ const PaymentPage = () => {
             "Payment failed. Please check your card details.";
 
           setPaymentError(message);
+          setIsPaying(false);
         },
       });
     } catch (err) {
       console.error("Payment error:", err);
-      setPaymentError("Unable to start payment.");
-    } finally {
+      setPaymentError(
+        err.response?.data?.message ?? "Unable to start payment right now."
+      );
       setIsPaying(false);
     }
   };
-
-  // Format labels
-  const cartSubtotalLabel = formatEuro(subtotalValue);
-  const shippingLabel = shippingAmount ? formatEuro(shippingAmount) : "Free";
-  const totalLabel = formatEuro(total);
 
   return (
     <section className="page checkout-page payment-page">
@@ -109,6 +222,15 @@ const PaymentPage = () => {
 
             <div className="checkout-card checkout-card__note">
               <p>All payments are processed securely via SumUp.</p>
+              {customerEmail ? (
+                <p className="checkout-section__subtitle">
+                  Receipt will be sent to <strong>{customerEmail}</strong>.
+                </p>
+              ) : (
+                <p className="checkout-section__subtitle">
+                  Add an email on the previous step to receive your receipt.
+                </p>
+              )}
             </div>
 
             <label className="checkout-save">
@@ -202,7 +324,6 @@ const PaymentPage = () => {
               payment.
             </p>
 
-            {/* 4️⃣ SUMUP CARD WIDGET MOUNTS HERE */}
             <div id="sumup-card" style={{ marginTop: "20px" }}></div>
 
             <button
@@ -220,6 +341,11 @@ const PaymentPage = () => {
                 {paymentError}
               </p>
             )}
+            {checkoutId ? (
+              <p className="checkout-section__subtitle">
+                Checkout ID: {checkoutId}
+              </p>
+            ) : null}
           </div>
         </aside>
       </div>
