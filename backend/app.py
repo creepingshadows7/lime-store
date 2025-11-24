@@ -29,6 +29,7 @@ from flask_pymongo import PyMongo
 from bson import ObjectId
 from bson.errors import InvalidId
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 load_dotenv()
 
@@ -58,6 +59,21 @@ DEFAULT_ADMIN_NAME = (
 def create_app() -> Flask:
     """Create and configure the Flask application."""
     app = Flask(__name__)
+
+    # Honor proxy headers so generated links (images, emails) keep the public HTTPS origin.
+    trusted_proxy_hops_raw = os.getenv("TRUSTED_PROXY_HOPS", "1")
+    try:
+        trusted_proxy_hops = max(0, int(trusted_proxy_hops_raw))
+    except (TypeError, ValueError):
+        trusted_proxy_hops = 1
+    if trusted_proxy_hops:
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app,
+            x_for=trusted_proxy_hops,
+            x_proto=trusted_proxy_hops,
+            x_host=trusted_proxy_hops,
+            x_port=trusted_proxy_hops,
+        )
 
     # --- Configuration ---
     app.config["JWT_SECRET_KEY"] = os.getenv(
