@@ -16,6 +16,8 @@ import resend
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_cors import CORS
+from datetime import datetime
+from uuid import uuid4
 from flask_jwt_extended import (
     JWTManager,
     create_access_token,
@@ -80,7 +82,26 @@ def create_app() -> Flask:
 
 
     # --- Initialize extensions ---
-    CORS(app, supports_credentials=True)
+    allowed_origins = [
+        "http://localhost:5173",
+        "http://localhost:4173",
+        "http://localhost:3000",
+        "https://lime-store-production.up.railway.app",
+        os.getenv("FRONTEND_URL", "").strip(),
+        os.getenv("PUBLIC_FRONTEND_URL", "").strip(),
+        os.getenv("WEBSITE_URL", "").strip(),
+        os.getenv("APP_BASE_URL", "").strip(),
+        os.getenv("VERCEL_URL", "").strip(),
+    ]
+    cors_extra = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    if cors_extra:
+        for origin in cors_extra.split(","):
+            trimmed = origin.strip()
+            if trimmed:
+                allowed_origins.append(trimmed)
+    allowed_origins = [origin for origin in allowed_origins if origin]
+
+    CORS(app, supports_credentials=True, origins=allowed_origins or "*")
 
 
     JWTManager(app)
@@ -1728,6 +1749,11 @@ def create_app() -> Flask:
             "total": total_value,
             "currency": currency_code,
             "paymentStatus": payment_status,
+            "paymentMethod": str(
+                order_document.get("payment_method")
+                or order_document.get("paymentMethod")
+                or ""
+            ).strip(),
             "createdAt": created_at_iso,
             "customerEmail": customer_email if include_customer else "",
             "customerName": customer_name if include_customer else "",
@@ -1765,6 +1791,108 @@ def create_app() -> Flask:
             and stored_user_id
             and str(stored_user_id).strip() == normalized_user_id
         )
+
+    def clear_user_cart_state(
+        user_email: Optional[str],
+        user_identifier: Optional[str],
+        pending_order_id: Optional[str] = None,
+    ):
+        cleanup_conditions: List[Dict[str, object]] = [{"payment_status": "pending"}]
+        ownership_filters: List[Dict[str, object]] = []
+
+        normalized_email = normalize_email(user_email)
+        normalized_user_id = str(user_identifier or "").strip()
+
+        if normalized_email:
+            ownership_filters.extend(
+                [
+                    {"email": normalized_email},
+                    {"user": normalized_email},
+                    {"customer.email": normalized_email},
+                ]
+            )
+        if normalized_user_id:
+            ownership_filters.append({"user_id": normalized_user_id})
+        if pending_order_id:
+            ownership_filters.append({"order_id": str(pending_order_id).strip()})
+
+        if ownership_filters:
+            cleanup_conditions.append({"$or": ownership_filters})
+            db.orders.delete_many({"$and": cleanup_conditions})
+
+        if normalized_email:
+            db.users.update_one(
+                {"email": normalized_email},
+                {"$unset": {"cart": "", "cart_items": ""}},
+            )
+
+    def persist_paid_order(
+        normalized_items: List[Dict[str, object]],
+        total_value: float,
+        currency_code: str,
+        order_identifier: str,
+        checkout_reference: str,
+        customer_email: Optional[str],
+        customer_name: str,
+        current_user_email: Optional[str],
+        user_identifier: Optional[str],
+        payment_method: str,
+        shipping_address: Optional[Dict[str, str]] = None,
+    ) -> Tuple[Optional[Dict[str, object]], Dict[str, object], bool, Optional[str]]:
+        normalized_payment_method = (payment_method or "FAKE_TEST").strip() or "FAKE_TEST"
+        effective_order_id = order_identifier or f"LIME-{uuid4().hex[:10].upper()}"
+        normalized_currency = currency_code.strip().upper() if currency_code else "EUR"
+        normalized_customer_email = normalize_email(customer_email) or ""
+
+        existing_order = (
+            db.orders.find_one({"order_id": effective_order_id})
+            if effective_order_id
+            else None
+        )
+        payment_status_value = "paid"
+
+        base_fields: Dict[str, object] = {
+            "order_id": effective_order_id,
+            "checkout_id": checkout_reference,
+            "items": normalized_items,
+            "total": total_value if total_value is not None else 0,
+            "currency": normalized_currency,
+            "payment_status": payment_status_value,
+            "status": payment_status_value,
+            "payment_method": normalized_payment_method,
+            "email": normalized_customer_email,
+            "customer_name": customer_name,
+        }
+        if shipping_address:
+            base_fields["shipping_address"] = shipping_address
+        if user_identifier:
+            base_fields["user_id"] = user_identifier
+        if current_user_email:
+            base_fields["user"] = current_user_email
+
+        if existing_order:
+            if isinstance(existing_order.get("created_at"), datetime):
+                base_fields["created_at"] = existing_order["created_at"]
+            db.orders.update_one({"_id": existing_order["_id"]}, {"$set": base_fields})
+            order_document = db.orders.find_one({"_id": existing_order["_id"]}) or {
+                **base_fields,
+                "_id": existing_order.get("_id"),
+            }
+        else:
+            base_fields["created_at"] = datetime.utcnow()
+            insert_result = db.orders.insert_one(base_fields)
+            base_fields["_id"] = insert_result.inserted_id
+            order_document = base_fields
+
+        email_sent = False
+        email_error = None
+        if normalized_customer_email:
+            email_sent, email_error = send_order_confirmation_email(
+                order_document, normalized_customer_email
+            )
+
+        serialized_order = serialize_payment_order(order_document)
+        return serialized_order, order_document, email_sent, email_error
     def fetch_product(product_id: str):
         try:
             object_id = ObjectId(product_id)
@@ -3214,13 +3342,17 @@ def create_app() -> Flask:
             "Content-Type": "application/json"
         }
 
+        success_redirect_url = os.getenv(
+            "PAYMENT_SUCCESS_URL",
+            "https://lime-store-production.up.railway.app/payment/success",
+        )
         payload = {
             "checkout_reference": order_identifier,
             "amount": float(amount),
             "currency": "EUR",
             "pay_to_email": "lumite@abv.bg",
             "description": "Lime Store Order",
-            "redirect_url": "http://localhost:5173/payment/success"
+            "redirect_url": success_redirect_url,
         }
 
         response = requests.post(
@@ -3243,158 +3375,6 @@ def create_app() -> Flask:
 
 
 
-
-
-
-    # Checkout
-    @app.route("/api/checkout", methods=["POST"])
-    def checkout():
-        verify_jwt_in_request(optional=True)
-        current_user_email = get_jwt_identity()
-        user_document = (
-            db.users.find_one({"email": current_user_email})
-            if current_user_email
-            else None
-        )
-
-        payload = request.get_json(silent=True) or {}
-        items = payload.get("items", [])
-
-        if not isinstance(items, list) or not items:
-            return jsonify({"message": "Add at least one item to checkout."}), 400
-
-        normalized_items = []
-        for entry in items:
-            normalized_entry = normalize_order_item(entry)
-            if normalized_entry:
-                normalized_items.append(normalized_entry)
-
-        if not normalized_items:
-            return jsonify({"message": "Add at least one item to checkout."}), 400
-
-        customer_payload = payload.get("customer")
-        if not isinstance(customer_payload, dict):
-            customer_payload = {}
-
-        def clean_text(value: Optional[str]) -> str:
-            return str(value or "").strip()
-
-        name_source = customer_payload.get("name")
-        email_source = customer_payload.get("email")
-        phone_source = customer_payload.get("phone")
-
-        if not name_source and user_document:
-            name_source = user_document.get("name")
-        if not email_source and user_document:
-            email_source = user_document.get("email")
-        if not phone_source and user_document:
-            phone_source = user_document.get("phone")
-
-        customer_name = clean_text(name_source)
-        customer_email = normalize_email(email_source)
-        customer_phone = clean_text(phone_source)
-
-        if not customer_name:
-            return jsonify({"message": "Please provide the recipient name for delivery."}), 400
-        if not is_valid_email(customer_email):
-            return jsonify(
-                {"message": "Please provide a valid email address to receive updates."}
-            ), 400
-
-        address_payload = payload.get("address")
-        if not isinstance(address_payload, dict):
-            address_payload = {}
-        submitted_address = normalize_address_payload(address_payload)
-        stored_address = (
-            normalize_address_payload(user_document.get("address"))
-            if user_document and user_document.get("address")
-            else {}
-        )
-        normalized_stored_address = (
-            stored_address if is_complete_address(stored_address) else {}
-        )
-
-        if submitted_address and not is_complete_address(submitted_address):
-            return jsonify(
-                {
-                    "message": "Please complete all required delivery address fields before continuing."
-                }
-            ), 400
-
-        delivery_address = submitted_address or normalized_stored_address
-        if not delivery_address or not is_complete_address(delivery_address):
-            return jsonify(
-                {
-                    "message": "Add your delivery address so we know where to send your order."
-                }
-            ), 400
-
-        totals = calculate_order_totals(normalized_items)
-        order_number = f"LIME-{uuid4().hex[:8].upper()}"
-
-        customer_entry = {
-            "name": customer_name,
-            "email": customer_email,
-            "phone": customer_phone,
-            "type": "account" if current_user_email else "guest",
-        }
-
-        order_document = {
-            "items": normalized_items,
-            "created_at": datetime.utcnow(),
-            "order_number": order_number,
-            "order_id": order_number,
-            "subtotal": totals["subtotal"],
-            "total": totals["subtotal"],
-            "total_items": totals["total_items"],
-            "customer": customer_entry,
-            "shipping_address": delivery_address,
-            "currency": "EUR",
-            "payment_status": "pending",
-        }
-
-        if current_user_email:
-            order_document["user"] = current_user_email
-
-        updated_token = None
-        updated_profile = None
-        requested_save = bool(payload.get("saveAddress"))
-        should_update_profile = (
-            current_user_email and requested_save and bool(submitted_address)
-        )
-
-        if should_update_profile:
-            db.users.update_one(
-                {"email": current_user_email},
-                {"$set": {"address": submitted_address}},
-            )
-            refreshed_user = db.users.find_one({"email": current_user_email})
-            if refreshed_user:
-                updated_profile = serialize_user_profile(refreshed_user)
-                updated_token = create_access_token(identity=current_user_email)
-
-        insert_result = db.orders.insert_one(order_document)
-        order_document["_id"] = insert_result.inserted_id
-
-        response_payload = {
-            "message": "Delivery details locked in. Continue to payment to finish your order.",
-            "order": serialize_order(order_document),
-        }
-
-        if updated_profile and updated_token:
-            response_payload["access_token"] = updated_token
-            response_payload["user"] = updated_profile
-
-        record_audit_log(
-            current_user_email or customer_email,
-            "Created order",
-            {
-                "order_number": order_number,
-                "total_items": str(totals["total_items"]),
-            },
-        )
-
-        return jsonify(response_payload)
 
     @app.route("/api/orders/create", methods=["POST"])
     def create_paid_order():
@@ -3516,35 +3496,36 @@ def create_app() -> Flask:
         ).strip()
 
         existing_order = db.orders.find_one({"order_id": order_identifier})
-        if existing_order:
+        if existing_order and str(existing_order.get("payment_status") or "").lower() in {
+            "paid",
+            "captured",
+        }:
             serialized_existing = serialize_payment_order(existing_order)
             return jsonify({"message": "Order already recorded.", "order": serialized_existing})
 
-        order_document = {
-            "order_id": order_identifier,
-            "checkout_id": checkout_reference,
-            "items": normalized_items,
-            "total": total_value if total_value is not None else 0,
-            "currency": currency_code,
-            "payment_status": "paid",
-            "created_at": datetime.utcnow(),
-            "email": customer_email,
-            "customer_name": customer_name,
-        }
-        if user_identifier:
-            order_document["user_id"] = user_identifier
-        if current_user_email:
-            order_document["user"] = current_user_email
+        shipping_address = normalize_address_payload(
+            payload.get("shippingAddress") or payload.get("address") or {}
+        )
+        payment_method = (
+            str(payload.get("paymentMethod") or payload.get("payment_method") or "EXTERNAL").strip()
+            or "EXTERNAL"
+        )
 
-        insert_result = db.orders.insert_one(order_document)
-        order_document["_id"] = insert_result.inserted_id
+        serialized_order, order_document, email_sent, email_error = persist_paid_order(
+            normalized_items,
+            total_value,
+            currency_code,
+            order_identifier,
+            checkout_reference,
+            customer_email,
+            customer_name,
+            current_user_email,
+            user_identifier,
+            payment_method,
+            shipping_address if shipping_address else None,
+        )
 
-        email_sent = False
-        email_error = None
-        if customer_email:
-            email_sent, email_error = send_order_confirmation_email(
-                order_document, customer_email
-            )
+        clear_user_cart_state(customer_email or current_user_email, user_identifier)
 
         record_audit_log(
             current_user_email or customer_email,
@@ -3568,6 +3549,7 @@ def create_app() -> Flask:
 
     @app.route("/api/orders", methods=["GET"])
     @app.route("/api/orders/user", methods=["GET"])
+    @app.route("/api/orders/me", methods=["GET"])
     @jwt_required()
     def list_orders():
         current_email = normalize_email(get_jwt_identity())
@@ -3606,13 +3588,14 @@ def create_app() -> Flask:
         return jsonify({"orders": orders})
 
     @app.route("/api/orders/all", methods=["GET"])
+    @app.route("/api/admin/orders", methods=["GET"])
     @jwt_required()
     def list_all_orders():
         _, admin_error = require_admin_user()
         if admin_error:
             return admin_error
-
-        cursor = db.orders.find().sort([("created_at", -1), ("_id", -1)])
+        query = {"payment_status": {"$in": ["paid", "captured"]}}
+        cursor = db.orders.find(query).sort([("created_at", -1), ("_id", -1)])
         orders = []
         for document in cursor:
             serialized = serialize_payment_order(document)

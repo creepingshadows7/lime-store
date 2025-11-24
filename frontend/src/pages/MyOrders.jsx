@@ -31,7 +31,7 @@ const MyOrders = () => {
       setStatus("loading");
       setFeedback("");
       try {
-        const { data } = await apiClient.get("/api/orders/user");
+        const { data } = await apiClient.get("/api/orders/me");
         const receivedOrders = Array.isArray(data?.orders) ? data.orders : [];
         setOrders(receivedOrders);
         setStatus("success");

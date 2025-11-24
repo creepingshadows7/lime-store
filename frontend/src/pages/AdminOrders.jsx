@@ -45,7 +45,7 @@ const AdminOrders = () => {
       setStatus("loading");
       setFeedback("");
       try {
-        const { data } = await apiClient.get("/api/orders/all");
+        const { data } = await apiClient.get("/api/admin/orders");
         const received = Array.isArray(data?.orders) ? data.orders : [];
         setOrders(received);
         setStatus("success");
@@ -112,7 +112,7 @@ const AdminOrders = () => {
               {orders.map((order) => (
                 <tr key={order.id || order.orderId}>
                   <td>{order.orderId || order.id}</td>
-                  <td>{order.customerEmail || "—"}</td>
+                  <td>{order.customerEmail || "-"}</td>
                   <td>{order.itemCount ?? order.items?.length ?? 0}</td>
                   <td>{formatEuro(order.total)}</td>
                   <td>{formatDateTime(order.createdAt)}</td>

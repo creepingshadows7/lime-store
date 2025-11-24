@@ -140,7 +140,7 @@ const Checkout = () => {
         address: validation.address,
         ...(isAuthenticated ? { saveAddress } : {}),
       };
-      const { data } = await apiClient.post("/api/checkout", payload);
+      const { data } = await apiClient.post("/api/payments/fake-checkout", payload);
       if (isAuthenticated && data?.access_token && data?.user) {
         login(data.access_token, data.user);
       }

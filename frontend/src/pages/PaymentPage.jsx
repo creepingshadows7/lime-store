@@ -21,17 +21,31 @@ const loadStoredContact = () => {
   }
 };
 
+const loadStoredAddress = () => {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const rawValue = window.localStorage.getItem("limeCheckoutAddress");
+    if (!rawValue) {
+      return {};
+    }
+    const parsed = JSON.parse(rawValue);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
 const PaymentPage = () => {
   const navigate = useNavigate();
   const { profile } = useAuth();
-  const { items, subtotal, totalItems } = useCart();
-  const [billingSameAsDelivery, setBillingSameAsDelivery] = useState(true);
+  const { items, subtotal, totalItems, clearCart } = useCart();
   const [isPaying, setIsPaying] = useState(false);
   const [paymentError, setPaymentError] = useState(null);
-  const [checkoutId, setCheckoutId] = useState("");
-  const [orderTrackingId, setOrderTrackingId] = useState("");
 
   const storedContact = useMemo(() => loadStoredContact(), []);
+  const storedAddress = useMemo(() => loadStoredAddress(), []);
 
   const shippingAmount = useMemo(
     () => (items.length > 0 ? 4.95 : 0),
@@ -79,133 +93,85 @@ const PaymentPage = () => {
   const shippingLabel = shippingAmount ? formatEuro(shippingAmount) : "Free";
   const totalLabel = formatEuro(total);
 
-  const finalizeOrder = useCallback(
-    async (nextCheckoutId, nextOrderId) => {
-      setPaymentError(null);
-      setIsPaying(true);
-
-      try {
-        const payload = {
-          checkoutId: nextCheckoutId,
-          orderId: nextOrderId,
-          items: orderItems,
-          total,
-          currency: "EUR",
-          email: customerEmail || undefined,
-          name: customerName,
-        };
-        const { data } = await apiClient.post("/api/orders/create", payload);
-        const persistedOrder =
-          data?.order?.orderId || data?.order?.id || nextOrderId || nextCheckoutId;
-
-        try {
-          window.localStorage.removeItem("limeCheckoutContact");
-          window.localStorage.removeItem("limeCheckoutAddress");
-        } catch {
-          // Ignore storage clean-up errors.
-        }
-
-        const targetOrderId = persistedOrder || nextOrderId || nextCheckoutId;
-        navigate(
-          `/payment/success?orderId=${encodeURIComponent(targetOrderId)}`,
-          {
-            replace: true,
-            state: { orderId: targetOrderId, order: data?.order },
-          }
-        );
-      } catch (error) {
-        const message =
-          error.response?.data?.message ??
-          "We could not confirm your order yet. Please contact support if this persists.";
-        setPaymentError(message);
-      } finally {
-        setIsPaying(false);
-      }
-    },
-    [customerEmail, customerName, navigate, orderItems, total]
-  );
-
-  // --- HANDLE PAYMENT ---
-  const handlePayNow = async () => {
+  const handlePayNow = useCallback(async () => {
     if (!orderItems.length) {
       setPaymentError("Your cart is empty. Add items before paying.");
       return;
     }
 
+    setIsPaying(true);
+    setPaymentError(null);
+
+    const shippingAddressPayload =
+      storedAddress && Object.keys(storedAddress).length > 0
+        ? storedAddress
+        : undefined;
+
     try {
-      setIsPaying(true);
-      setPaymentError(null);
-
-      const widgetContainer = document.getElementById("sumup-card");
-      if (widgetContainer) {
-        widgetContainer.innerHTML = "";
-      }
-
+      const payload = {
+        items: orderItems,
+        total,
+        currency: "EUR",
+        email: customerEmail || undefined,
+        name: customerName,
+        shippingAddress: shippingAddressPayload,
+        paymentMethod: "FAKE_TEST",
+      };
       const { data } = await apiClient.post(
-        "/api/payments/sumup/create_checkout",
-        {
-          amount: total,
-          currency: "EUR",
-          orderId: orderTrackingId || undefined,
-          email: customerEmail,
-          name: customerName,
-        }
+        "/api/payments/fake-checkout",
+        payload
       );
 
-      const checkoutIdValue = data?.checkout_id;
-      const orderIdentifier =
-        data?.order_id || data?.orderId || orderTrackingId || checkoutIdValue;
+      const persistedOrder =
+        data?.orderId || data?.order?.orderId || data?.order?.id;
 
-      if (!checkoutIdValue) {
-        setPaymentError("No checkout ID returned from the server.");
-        setIsPaying(false);
-        return;
+      try {
+        window.localStorage.removeItem("limeCheckoutContact");
+        window.localStorage.removeItem("limeCheckoutAddress");
+      } catch {
+        // Ignore storage clean-up errors.
       }
 
-      setCheckoutId(checkoutIdValue);
-      setOrderTrackingId(orderIdentifier);
+      clearCart();
 
-      if (!window.SumUpCard) {
-        setPaymentError("Could not load SumUp payment widget.");
-        setIsPaying(false);
-        return;
-      }
+      const targetOrderId =
+        persistedOrder ||
+        orderItems[0]?.orderId ||
+        orderItems[0]?.productId ||
+        orderItems[0]?.id ||
+        "order";
 
-      window.SumUpCard.mount({
-        id: "sumup-card",
-        checkoutId: checkoutIdValue,
-        onResponse: (type, body) => {
-          if (type === "success") {
-            finalizeOrder(checkoutIdValue, orderIdentifier);
-            return;
-          }
-
-          const message =
-            body?.message ||
-            body?.error_message ||
-            body?.errors?.[0]?.message ||
-            "Payment failed. Please check your card details.";
-
-          setPaymentError(message);
-          setIsPaying(false);
-        },
+      navigate(`/payment/success?orderId=${encodeURIComponent(targetOrderId)}`, {
+        replace: true,
+        state: { orderId: targetOrderId, order: data?.order },
       });
     } catch (err) {
       console.error("Payment error:", err);
       setPaymentError(
-        err.response?.data?.message ?? "Unable to start payment right now."
+        err.response?.data?.message ??
+          "Unable to process your payment right now. Please try again."
       );
+    } finally {
       setIsPaying(false);
     }
-  };
+  }, [
+    clearCart,
+    customerEmail,
+    customerName,
+    navigate,
+    orderItems,
+    storedAddress,
+    total,
+  ]);
 
   return (
     <section className="page checkout-page payment-page">
       <header className="page__intro">
         <p className="eyebrow">Payment</p>
-        <h1 className="page__title">Confirm your payment details</h1>
+        <h1 className="page__title">Confirm your order</h1>
         <p className="page__subtitle">
-          Enter your card details securely with SumUp to finish your order.
+          This is a test checkout. We will create your order instantly and send a
+          confirmation email.
         </p>
       </header>
 
@@ -213,36 +179,26 @@ const PaymentPage = () => {
         <div className="checkout-panel">
           <div className="checkout-section">
             <div>
-              <p className="eyebrow eyebrow--muted">Step 3</p>
-              <h2>Payment details</h2>
+              <p className="eyebrow eyebrow--muted">Final step</p>
+              <h2>Review and confirm</h2>
               <p className="checkout-section__subtitle">
-                Use the SumUp card widget below to complete your purchase.
+                No real payment is processed. Clicking the button below will
+                mark your order as paid and trigger the receipt email.
               </p>
             </div>
 
             <div className="checkout-card checkout-card__note">
-              <p>All payments are processed securely via SumUp.</p>
+              <p>Ready to finish? We&apos;ll place your order right away.</p>
               {customerEmail ? (
                 <p className="checkout-section__subtitle">
                   Receipt will be sent to <strong>{customerEmail}</strong>.
                 </p>
               ) : (
                 <p className="checkout-section__subtitle">
-                  Add an email on the previous step to receive your receipt.
+                  Add an email in the checkout step to receive your receipt.
                 </p>
               )}
             </div>
-
-            <label className="checkout-save">
-              <input
-                type="checkbox"
-                checked={billingSameAsDelivery}
-                onChange={() =>
-                  setBillingSameAsDelivery((prev) => !prev)
-                }
-              />
-              <span>Billing address matches delivery</span>
-            </label>
           </div>
         </div>
 
@@ -264,9 +220,7 @@ const PaymentPage = () => {
           ) : (
             <ul className="checkout-summary__list">
               {items.map((item) => {
-                const lineTotal = formatEuro(
-                  item.price * item.quantity
-                );
+                const lineTotal = formatEuro(item.price * item.quantity);
                 return (
                   <li
                     key={`${item.id}-${item.variationId || "base"}`}
@@ -320,11 +274,9 @@ const PaymentPage = () => {
           <div className="checkout-section">
             <h3>Payment</h3>
             <p className="checkout-section__subtitle">
-              The SumUp card widget will load below after you start
-              payment.
+              We&apos;ll confirm your test payment and create the paid order on
+              our server.
             </p>
-
-            <div id="sumup-card" style={{ marginTop: "20px" }}></div>
 
             <button
               type="button"
@@ -333,7 +285,7 @@ const PaymentPage = () => {
               disabled={isPaying}
               style={{ marginTop: "1rem" }}
             >
-              {isPaying ? "Processing..." : "PAY NOW"}
+              {isPaying ? "Processing..." : "Complete test payment"}
             </button>
 
             {paymentError && (
@@ -341,11 +293,6 @@ const PaymentPage = () => {
                 {paymentError}
               </p>
             )}
-            {checkoutId ? (
-              <p className="checkout-section__subtitle">
-                Checkout ID: {checkoutId}
-              </p>
-            ) : null}
           </div>
         </aside>
       </div>
