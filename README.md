@@ -1,1 +1,1 @@
-vB2.2.3 Bug Fixes
+v2.2.4 Bug Fixes and payment testing

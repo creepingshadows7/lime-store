@@ -1,0 +1,237 @@
+[33mcommit 80407f929a92df3feb76d04ec72cbb5c5cbef032[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Mon Nov 24 15:07:43 2025 +0100
+
+    vB2.2.3 Bug Fixes
+
+[33mcommit 03adf3b47f7e4d95f43a07ef7f76ce5f9475e3ab[m[33m ([m[1;31morigin/development[m[33m, [m[1;32mdevelopment[m[33m)[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Mon Nov 24 14:39:02 2025 +0100
+
+    vB2.2.2
+
+[33mcommit 27fb1555aab0c95b76f58d7901741378c2635e33[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Fri Nov 21 03:19:36 2025 +0100
+
+    vB2.2.1 Testing SumUp payments, sandbox ready
+
+[33mcommit 1a9267d0b071461ce3a1434766908c4b85b2bfc0[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Fri Nov 21 02:45:34 2025 +0100
+
+    vB2.1.0
+
+[33mcommit 16f40b9b15a1b8b18182f3f68b798b858e43bc4e[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Thu Nov 20 13:33:01 2025 +0100
+
+    v2.1.0 Production Site ready
+
+[33mcommit 2a97e94027192625ad0b1a0ae02a6c31a47e3939[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Thu Nov 20 13:03:37 2025 +0100
+
+    v2.0.16 Data base photos fix
+
+[33mcommit 4916b35e70fd75f21098b9fd8141a44d9ed98c29[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Thu Nov 20 12:51:43 2025 +0100
+
+    v2.0.15 Data Base fixes
+
+[33mcommit 4621eadac8cc7f98ea927a4d9c0d54854044feed[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Thu Nov 20 11:51:59 2025 +0100
+
+    v2.0.14 Deployment Fixes
+
+[33mcommit 44c0a24020712f284a7b8e4c71abbdcae7693d4b[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Thu Nov 20 09:49:50 2025 +0100
+
+    v2.0.13 Deployment Fixes
+
+[33mcommit fac927c87bea0aaf67fcf6d74262937171d7442b[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 22:16:28 2025 +0100
+
+    v2.0.12 Deployment Fixes
+
+[33mcommit 8b85361a6cab8cf1503f7a06e355f7b9ffb2c981[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 22:08:47 2025 +0100
+
+    v2.0.11 Fixes for database
+
+[33mcommit cb67743d6190e62a61ac13d1c513c972132aff45[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 21:20:27 2025 +0100
+
+    v2.0.10 Preparations for hosting with Railway
+
+[33mcommit 35d96d92b3c0f861c830254dc97b05aa428e0e0d[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 21:19:00 2025 +0100
+
+    v2.0.9 Preparations for hosting with Railway
+
+[33mcommit f55e86a685403b651b1b07352dd566bf2419f475[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 19:49:14 2025 +0100
+
+    v2.0.8 Preparations for hosting with Railway
+
+[33mcommit a0d8c9390978308a7e2ddb8e999438ff74dcca89[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 19:46:27 2025 +0100
+
+    v2.0.7 Preparations for hosting with Railway
+
+[33mcommit 8bf0877b6c656bec9c13ef4d9c4e66b128a4e68f[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 19:43:41 2025 +0100
+
+    v2.0.6 Preparations for hosting with Railway
+
+[33mcommit 589c1130aa461ef6304044823dde0563fd1ace67[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 19:36:34 2025 +0100
+
+    v2.0.5 Preparations for hosting with Railway
+
+[33mcommit f2df9ded07ed48e8a3e0035cce91edfa8930e7f6[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 19:32:34 2025 +0100
+
+    v2.0.4 TOML Preparations for hosting with Railway
+
+[33mcommit dfbf680058a33b6a392a7d49ed401cf0349dbc82[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 19:28:51 2025 +0100
+
+    v2.0.3 TOML Preparations for hosting with Railway
+
+[33mcommit d0f7f74c5970ac71a6df6d737801031d29f92654[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 19:27:04 2025 +0100
+
+    v2.0.2 TOML Preparations for hosting with Railway
+
+[33mcommit 9df7dea00e91ab4341b87ba4984d6a07b306863f[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 19:24:15 2025 +0100
+
+    v2.0.1 Preparations for hosting with Railway
+
+[33mcommit 1269aa37bd1a32e84e4be442a7c98a4d814c9db5[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 19 19:11:28 2025 +0100
+
+    v2.0 UI Overhaul and preparation for domain hosting
+
+[33mcommit 4ec7fdbaa7876f317f5e2fbcc330146d058a821b[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Mon Nov 17 10:10:41 2025 +0100
+
+    v1.11.2 Users can reset their password from the account page with OTP email verification
+
+[33mcommit 69f1175a2eaf0f51ccef667d97c8926db8f7868e[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Mon Nov 17 09:33:29 2025 +0100
+
+    v1.11.1 Users can reset their password from the login page with OTP email verification
+
+[33mcommit 5fb65f3a1cc6115045cc08134e814c698e34f222[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Sat Nov 15 23:47:55 2025 +0100
+
+    v1.11 Logs Section in the Admin Control Panel
+
+[33mcommit bc03ff6c550464e2eeb37d9cb19633537c16e959[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Sat Nov 15 22:22:19 2025 +0100
+
+    v1.10 Updated User Email change with new automatic emails and UI changes
+
+[33mcommit 210922a66649d7b2cbcfa127f6353109ef46c8ed[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Fri Nov 14 22:46:20 2025 +0100
+
+    v1.9.6 UI changes in profile page and bug fixes
+
+[33mcommit 3a1a4414973ea9ce62dfa0f27aecf9802dfd43ce[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Fri Nov 14 22:10:20 2025 +0100
+
+    v1.9.5 Password verification email bugs and fixes
+
+[33mcommit 51abe3a076869310011b8e4fef1827f755ace4ef[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Fri Nov 14 21:59:05 2025 +0100
+
+    v1.9.4 User Password change updates, now requires old password
+
+[33mcommit 14ab7fa91f124ee69365779e545bff65cdfc44af[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Wed Nov 12 13:27:08 2025 +0100
+
+    v1.9.3 Bug fixes and improvements
+
+[33mcommit d0f079351a5f263722c7f3008e0c21fc26054a14[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Tue Nov 11 15:10:57 2025 +0100
+
+    v1.9.2 Home page selected item more editing info, bug fixes, UI changes
+
+[33mcommit 2fb173241c41042b41331022b4be55b9fd1b9303[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Tue Nov 11 14:44:56 2025 +0100
+
+    v1.9.1 Search bar in products tab
+
+[33mcommit 0777c4a488e4035fc0001d3ca24dabf4f7403132[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Mon Nov 10 21:13:00 2025 +0100
+
+    v1.9 Check out and delivery address basic configuration is complete
+
+[33mcommit 4dcc0515b362fc66e20fb3add3988f137251a135[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Mon Nov 10 19:38:11 2025 +0100
+
+    v1.8 Store discounts are now available
+
+[33mcommit befa7de9c5e86fc7d27e504b2c26330c3d7d8170[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Mon Nov 10 17:52:04 2025 +0100
+
+    v1.7.4 Home page UI changes and bug fixes
+
+[33mcommit 7523452084e3e917df519a74b1eb0cce57a3d0e7[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Mon Nov 10 17:36:07 2025 +0100
+
+    v1.7.3 Home page UI changes, custom product uploads
+
+[33mcommit 30a6c917ccba497096d317c0a98f1796d0c29ea1[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Mon Nov 10 13:38:49 2025 +0100
+
+    v1.7.2 Product variants changes and bug fixes
+
+[33mcommit 7d1f5403a049ae6990dad69a58d6049e7d0be02f[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Sun Nov 9 21:44:25 2025 +0100
+
+    v1.7.1 Recent Purchase in Account Section UI
+
+[33mcommit 6052ed5de1c586f910f65c690263ae64247c6a62[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Sun Nov 9 21:08:49 2025 +0100
+
+    v1.7 Cart Interface is working
+
+[33mcommit ecaed067cdf0e504117cc627efa5d40d24ea7158[m
+Author: creepingshadows7 <creepingshadows7878@gmail.com>
+Date:   Sun Nov 9 1
