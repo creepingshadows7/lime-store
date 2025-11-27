@@ -1,4 +1,10 @@
 To do list:
 
-Fix Safari compatibility issues
+Fix my orders
+Fix admin page elements loading
+Check pages after payment both siccess and failure
 
+
+remove the "your orders" section from the profile page
+
+fix the all 3 sections in the admin page to load things properly, now they don't show the required information

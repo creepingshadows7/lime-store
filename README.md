@@ -1,1 +1,1 @@
-v2.2.4 Bug Fixes and payment testing
+vB2.3.2 Removed unnecessary components

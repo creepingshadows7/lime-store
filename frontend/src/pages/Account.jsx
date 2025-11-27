@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import EmailChangeVerification from "../components/EmailChangeVerification";
 import { getProfileInitial } from "../utils/profile";
-import { formatEuro } from "../utils/currency";
-import { formatPublishedDate } from "../utils/dates";
 
 const mapAddressToState = (address = {}) => ({
   addressCountry:
@@ -48,14 +46,6 @@ const buildPasswordFormState = () => ({
   confirmPassword: "",
 });
 
-const ORDER_DATE_OPTIONS = {
-  year: "numeric",
-  month: "short",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-};
-
 const Account = () => {
   const { isAuthenticated, profile, login } = useAuth();
   const [formValues, setFormValues] = useState(initialProfileState);
@@ -88,9 +78,6 @@ const Account = () => {
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarStatus, setAvatarStatus] = useState("idle");
   const [avatarFeedback, setAvatarFeedback] = useState("");
-  const [orders, setOrders] = useState([]);
-  const [ordersStatus, setOrdersStatus] = useState("idle");
-  const [ordersFeedback, setOrdersFeedback] = useState("");
   const fileInputRef = useRef(null);
 
   const sanitizedProfile = useMemo(
@@ -214,35 +201,6 @@ const Account = () => {
     return "";
   }, [formValues.email, pendingEmail, profile]);
 
-  const fetchOrders = useCallback(async () => {
-    if (!isAuthenticated) {
-      setOrders([]);
-      setOrdersStatus("idle");
-      setOrdersFeedback("");
-      return;
-    }
-
-    setOrdersStatus("loading");
-    setOrdersFeedback("");
-
-    try {
-      const { data } = await apiClient.get("/api/orders");
-      const nextOrders = Array.isArray(data?.orders) ? data.orders : [];
-      setOrders(nextOrders);
-      setOrdersStatus("success");
-    } catch (error) {
-      const message =
-        error.response?.data?.message ??
-        "We couldn't load your orders right now.";
-      setOrdersStatus("error");
-      setOrdersFeedback(message);
-    }
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    fetchOrders();
-  }, [fetchOrders]);
-
   useEffect(() => {
     const nextPendingEmail = profile?.pending_email ?? "";
     setPendingEmail(nextPendingEmail);
@@ -252,168 +210,6 @@ const Account = () => {
       setOtpFeedback("");
     }
   }, [profile?.pending_email]);
-
-  const orderHistory = useMemo(() => {
-    return orders.map((order) => {
-      const rawItems = Array.isArray(order?.items) ? order.items : [];
-      const items = rawItems.map((item) => {
-        const variationName =
-          typeof item?.variationName === "string"
-            ? item.variationName.trim()
-            : typeof item?.variation_name === "string"
-            ? item.variation_name.trim()
-            : "";
-        return {
-          ...item,
-          variationName,
-        };
-      });
-      const providedSubtotal = Number(order?.subtotal);
-      const subtotal = Number.isFinite(providedSubtotal)
-        ? providedSubtotal
-        : items.reduce((sum, item) => {
-            const price = Number(item?.price) || 0;
-            const quantity = Number(item?.quantity) || 0;
-            return sum + price * quantity;
-          }, 0);
-      const providedTotalItems = Number(order?.totalItems);
-      const totalItems = Number.isFinite(providedTotalItems)
-        ? providedTotalItems
-        : items.reduce(
-            (sum, item) => sum + (Number(item?.quantity) || 0),
-            0
-          );
-      const createdAtRaw =
-        typeof order?.createdAt === "string" ? order.createdAt : "";
-      const createdAtLabel = createdAtRaw
-        ? formatPublishedDate(createdAtRaw, ORDER_DATE_OPTIONS)
-        : "";
-      return {
-        ...order,
-        items,
-        subtotal,
-        totalItems,
-        createdAtLabel,
-        createdAtRaw,
-      };
-    });
-  }, [orders]);
-
-  const renderOrdersPanel = () => (
-    <div className="account-orders account-orders--inline">
-      <div className="account-orders__header">
-        <div>
-          <p className="eyebrow">Your Orders</p>
-          <h2>Track every lime indulgence</h2>
-          <p className="account-orders__subtitle">
-            Review each purchase with itemized details and totals.
-          </p>
-        </div>
-        <button
-          type="button"
-          className="button button--outline account-orders__refresh"
-          onClick={handleRefreshOrders}
-          disabled={ordersStatus === "loading"}
-        >
-          {ordersStatus === "loading" ? "Refreshing..." : "Refresh"}
-        </button>
-      </div>
-      {ordersStatus === "loading" && (
-        <p className="page__status account-orders__status">
-          Fetching your latest orders...
-        </p>
-      )}
-      {ordersStatus === "error" && (
-        <p className="form-feedback form-feedback--error account-orders__status">
-          {ordersFeedback}
-        </p>
-      )}
-      {ordersStatus === "success" && orderHistory.length === 0 && (
-        <p className="page__status account-orders__status">
-          You have not completed a purchase yet. Once you do, it will appear
-          here.
-        </p>
-      )}
-      {orderHistory.length > 0 && (
-        <ul className="account-orders__timeline">
-          {orderHistory.map((order) => {
-            const orderItems = Array.isArray(order.items) ? order.items : [];
-            const createdAtLabel =
-              order.createdAtLabel || "Awaiting confirmation";
-            return (
-              <li
-                key={order.id || order.orderNumber}
-                className="account-orders__timeline-entry"
-              >
-                <header className="account-orders__timeline-header">
-                  <div>
-                    <p className="account-orders__number">
-                      {order.orderNumber || "Order"}
-                    </p>
-                    <p className="account-orders__date">{createdAtLabel}</p>
-                  </div>
-                  <div className="account-orders__totals">
-                    <span>
-                      {order.totalItems} item
-                      {order.totalItems === 1 ? "" : "s"}
-                    </span>
-                    <strong>{formatEuro(order.subtotal)}</strong>
-                  </div>
-                </header>
-                <div className="account-orders__timeline-items">
-                  {orderItems.map((item, index) => {
-                    const itemName =
-                      typeof item?.name === "string" && item.name.trim()
-                        ? item.name.trim()
-                        : "Curated Selection";
-                    const variationLabel =
-                      typeof item?.variationName === "string" &&
-                      item.variationName
-                        ? item.variationName
-                        : "";
-                    const displayName = variationLabel
-                      ? `${itemName} (${variationLabel})`
-                      : itemName;
-                    const quantity = Number(item?.quantity) || 0;
-                    const unitPrice = formatEuro(Number(item?.price) || 0);
-                    const lineTotalValue =
-                      Number(item?.lineTotal) ||
-                      Number((Number(item?.price) || 0) * quantity);
-                    const lineTotal = formatEuro(lineTotalValue);
-                    return (
-                      <div
-                        key={`${order.id || order.orderNumber}-${item?.productId || index}`}
-                        className="account-orders__timeline-item"
-                      >
-                        <div>
-                          <p className="account-orders__item-name">
-                            {displayName}
-                          </p>
-                          <p className="account-orders__item-meta">
-                            {quantity} x {unitPrice}
-                          </p>
-                        </div>
-                        <span className="account-orders__item-total">
-                          {lineTotal}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-
-  const handleRefreshOrders = () => {
-    if (ordersStatus === "loading") {
-      return;
-    }
-    fetchOrders();
-  };
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -827,7 +623,6 @@ const Account = () => {
           Keep your contact details polished and stay ready for exclusive drops
           and tailored recommendations.
         </p>
-        {renderOrdersPanel()}
       </div>
       <div className="account-card">
         {isLoadingProfile ? (
