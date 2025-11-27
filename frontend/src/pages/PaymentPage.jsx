@@ -110,46 +110,47 @@ const PaymentPage = () => {
     try {
       const payload = {
         items: orderItems,
-        total,
-        currency: "EUR",
-        email: customerEmail || undefined,
-        name: customerName,
+        customer: {
+          name: customerName,
+          email: customerEmail || undefined,
+        },
         shippingAddress: shippingAddressPayload,
-        paymentMethod: "FAKE_TEST",
       };
+
+      // Call the real SumUp endpoint
       const { data } = await apiClient.post(
-        "/api/payments/fake-checkout",
+        "/api/payments/sumup/create_checkout",
         payload
       );
 
-      const persistedOrder =
-        data?.orderId || data?.order?.orderId || data?.order?.id;
+      // Redirect to SumUp Hosted Checkout
+      const checkoutId = data.checkout_id;
+      const nextUrl = data.sumup_data?.next_step?.url ||
+        data.sumup_data?.redirect_url ||
+        data.sumup_data?.hosted_checkout_url ||
+        `https://checkout.sumup.com/page/${checkoutId}`;
 
-      try {
-        window.localStorage.removeItem("limeCheckoutContact");
-        window.localStorage.removeItem("limeCheckoutAddress");
-      } catch {
-        // Ignore storage clean-up errors.
+      if (nextUrl) {
+        // Clear cart and storage before redirecting
+        try {
+          window.localStorage.removeItem("limeCheckoutContact");
+          window.localStorage.removeItem("limeCheckoutAddress");
+        } catch {
+          // Ignore storage clean-up errors.
+        }
+        clearCart();
+
+        window.location.href = nextUrl;
+      } else {
+        throw new Error("Could not determine payment URL.");
       }
 
-      clearCart();
-
-      const targetOrderId =
-        persistedOrder ||
-        orderItems[0]?.orderId ||
-        orderItems[0]?.productId ||
-        orderItems[0]?.id ||
-        "order";
-
-      navigate(`/payment/success?orderId=${encodeURIComponent(targetOrderId)}`, {
-        replace: true,
-        state: { orderId: targetOrderId, order: data?.order },
-      });
     } catch (err) {
       console.error("Payment error:", err);
       setPaymentError(
+        err.response?.data?.error ??
         err.response?.data?.message ??
-          "Unable to process your payment right now. Please try again."
+        "Unable to process your payment right now. Please try again."
       );
     } finally {
       setIsPaying(false);
@@ -274,8 +275,7 @@ const PaymentPage = () => {
           <div className="checkout-section">
             <h3>Payment</h3>
             <p className="checkout-section__subtitle">
-              We&apos;ll confirm your test payment and create the paid order on
-              our server.
+              You will be redirected to SumUp to complete your payment securely.
             </p>
 
             <button
@@ -285,7 +285,7 @@ const PaymentPage = () => {
               disabled={isPaying}
               style={{ marginTop: "1rem" }}
             >
-              {isPaying ? "Processing..." : "Complete test payment"}
+              {isPaying ? "Redirecting..." : "Proceed to Payment"}
             </button>
 
             {paymentError && (

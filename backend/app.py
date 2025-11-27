@@ -14,7 +14,7 @@ from urllib.parse import urljoin, urlparse
 import bcrypt
 import resend
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory, redirect
 from flask_cors import CORS
 from datetime import datetime
 from uuid import uuid4
@@ -3338,59 +3338,304 @@ def create_app() -> Flask:
 
     # ---- SumUp Payment Integration ----
 
-    # ---- SumUp Payment Integration ----
+    _sumup_token_cache = {"access_token": None, "expires_at": None}
 
-    # ---- SumUp Payment Integration ----
+    def get_sumup_base_url():
+        env = os.getenv("SUMUP_ENV", "live").strip().lower()
+        # SumUp generally uses the same base URL, but we allow override or specific sandbox URL if needed.
+        # For now, we default to the standard API URL.
+        return "https://api.sumup.com"
+
+    def get_sumup_access_token():
+        client_id = os.getenv("SUMUP_CLIENT_ID")
+        client_secret = os.getenv("SUMUP_CLIENT_SECRET")
+        
+        if not client_id or not client_secret:
+            raise ValueError("SumUp configuration is incomplete. Please contact support.")
+
+        now = datetime.utcnow()
+        if (
+            _sumup_token_cache["access_token"]
+            and _sumup_token_cache["expires_at"]
+            and _sumup_token_cache["expires_at"] > now + timedelta(seconds=30)
+        ):
+            return _sumup_token_cache["access_token"]
+
+        base_url = get_sumup_base_url()
+        url = f"{base_url}/token"
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+        
+        try:
+            response = requests.post(url, data=payload)
+            response.raise_for_status()
+            data = response.json()
+            access_token = data.get("access_token")
+            expires_in = data.get("expires_in", 3600)
+            
+            _sumup_token_cache["access_token"] = access_token
+            _sumup_token_cache["expires_at"] = now + timedelta(seconds=expires_in)
+            return access_token
+        except Exception as exc:
+            app.logger.error(f"SumUp Auth Error: {exc}")
+            raise ValueError("Failed to authenticate with payment provider.")
 
     @app.route("/api/payments/sumup/create_checkout", methods=["POST"])
+    @jwt_required(optional=True)
     def sumup_create_checkout():
-        data = request.json or {}
+        try:
+            payload = request.get_json(silent=True) or {}
+            
+            if not os.getenv("SUMUP_CLIENT_ID") or not os.getenv("SUMUP_CLIENT_SECRET"):
+                return jsonify({"error": "SumUp configuration is incomplete. Please contact support."}), 500
 
-        amount = data.get("amount")
-        provided_order_id = str(data.get("orderId") or "").strip()
+            raw_items = payload.get("items") or []
+            normalized_items = []
+            for entry in raw_items:
+                norm = normalize_order_item(entry)
+                if norm:
+                    normalized_items.append(norm)
+            
+            if not normalized_items:
+                return jsonify({"error": "No valid items in checkout."}), 400
 
-        if amount is None:
-            return jsonify({"error": "Amount is required"}), 400
+            totals = calculate_order_totals(normalized_items)
+            calculated_total = totals["subtotal"]
+            
+            provided_order_id = str(payload.get("orderId") or "").strip()
+            order_identifier = provided_order_id or f"LIME-{uuid4().hex[:10].upper()}"
+            
+            callback_url = os.getenv("SUMUP_REDIRECT_URL")
+            if not callback_url:
+                callback_url = urljoin(request.host_url, "/api/payments/sumup/callback")
+            
+            access_token = get_sumup_access_token()
+            
+            current_user_email = normalize_email(get_jwt_identity())
+            user_document = db.users.find_one({"email": current_user_email}) if current_user_email else None
+            user_identifier = str(user_document["_id"]) if user_document else ""
+            
+            customer_payload = payload.get("customer") or {}
+            customer_email = normalize_email(customer_payload.get("email") or current_user_email)
+            customer_name = str(customer_payload.get("name") or "").strip()
+            
+            shipping_address = normalize_address_payload(payload.get("shippingAddress"))
 
-        order_identifier = provided_order_id or f"LIME-{uuid4().hex[:8].upper()}"
-        headers = {
-            "Authorization": f"Bearer {os.getenv('SUMUP_SECRET_KEY_TEST')}",
-            "Content-Type": "application/json"
-        }
+            pending_order = {
+                "order_id": order_identifier,
+                "items": normalized_items,
+                "total": calculated_total,
+                "currency": "EUR",
+                "payment_status": "pending",
+                "status": "pending",
+                "payment_method": "SUMUP_CARD",
+                "email": customer_email,
+                "customer_name": customer_name,
+                "created_at": datetime.utcnow(),
+                "user": current_user_email,
+                "user_id": user_identifier,
+                "shipping_address": shipping_address
+            }
+            db.orders.insert_one(pending_order)
 
-        success_redirect_url = os.getenv(
-            "PAYMENT_SUCCESS_URL",
-            "https://lime-store-production.up.railway.app/payment/success",
-        )
-        payload = {
-            "checkout_reference": order_identifier,
-            "amount": float(amount),
-            "currency": "EUR",
-            "pay_to_email": "lumite@abv.bg",
-            "description": "Lime Store Order",
-            "redirect_url": success_redirect_url,
-        }
+            checkout_payload = {
+                "checkout_reference": order_identifier,
+                "amount": calculated_total,
+                "currency": "EUR",
+                "pay_to_email": os.getenv("SUMUP_MERCHANT_EMAIL"),
+                "description": f"Order {order_identifier}",
+                "return_url": callback_url,
+            }
+            
+            if customer_email:
+                checkout_payload["customer_email"] = customer_email
+            
+            base_url = get_sumup_base_url()
+            app.logger.info(f"Creating SumUp checkout at {base_url} for Order {order_identifier}")
 
-        response = requests.post(
-            "https://api.sumup.com/v0.1/checkouts",
-            json=payload,
-            headers=headers
-        )
+            response = requests.post(
+                f"{base_url}/v0.1/checkouts",
+                json=checkout_payload,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            
+            if response.status_code != 201:
+                app.logger.error(f"SumUp Checkout Failed: {response.text}")
+                return jsonify({"error": "Failed to create payment session.", "details": response.json()}), response.status_code
 
-        print("SUMUP RESPONSE:", response.text)
+            checkout_data = response.json()
+            checkout_id = checkout_data.get("id")
+            
+            db.orders.update_one(
+                {"order_id": order_identifier},
+                {"$set": {"checkout_id": checkout_id}}
+            )
 
-        if response.status_code != 201:
-            return jsonify({"error": response.text}), response.status_code
+            return jsonify({
+                "checkout_id": checkout_id,
+                "order_id": order_identifier,
+                "amount": calculated_total,
+                "currency": "EUR",
+                "sumup_data": checkout_data 
+            }), 200
 
-        checkout = response.json()
-        checkout_id = checkout.get("id")
+        except ValueError as ve:
+            return jsonify({"error": str(ve)}), 500
+        except Exception as e:
+            app.logger.error(f"Create Checkout Error: {e}")
+            return jsonify({"error": "Internal server error"}), 500
 
-        return jsonify({"checkout_id": checkout_id, "order_id": order_identifier}), 200
+    @app.route("/api/payments/sumup/callback", methods=["GET", "POST"])
+    def sumup_callback():
+        checkout_ref = request.args.get("checkout_reference")
+        checkout_id = request.args.get("checkout_id")
+        status = request.args.get("status")
+        
+        failure_url = os.getenv("PAYMENT_FAILURE_URL")
+        success_url = os.getenv("PAYMENT_SUCCESS_URL")
+        
+        if not checkout_ref:
+             return jsonify({"error": "Missing checkout reference"}), 400
 
+        if status == "FAILED":
+             if failure_url:
+                 return redirect(failure_url)
+             return jsonify({"message": "Payment failed"}), 400
 
+        try:
+            access_token = get_sumup_access_token()
+            
+            if not checkout_id:
+                order = db.orders.find_one({"order_id": checkout_ref})
+                if order:
+                    checkout_id = order.get("checkout_id")
+            
+            if not checkout_id:
+                 return jsonify({"error": "Unknown checkout"}), 400
 
+            base_url = get_sumup_base_url()
+            response = requests.get(
+                f"{base_url}/v0.1/checkouts/{checkout_id}",
+                headers={"Authorization": f"Bearer {access_token}"}
+            )
+            
+            if response.status_code != 200:
+                 return jsonify({"error": "Failed to verify payment"}), 502
+            
+            checkout_data = response.json()
+            sumup_status = checkout_data.get("status")
+            if sumup_status not in ("PAID", "SUCCESSFUL"):
+                 if failure_url:
+                     return redirect(failure_url)
+                 return jsonify({"message": f"Payment status: {sumup_status}"}), 400
+            
+            pending_order = db.orders.find_one({"order_id": checkout_ref})
+            if not pending_order:
+                 return jsonify({"error": "Order not found"}), 404
+            
+            persist_paid_order(
+                normalized_items=pending_order.get("items", []),
+                total_value=float(checkout_data.get("amount", 0)),
+                currency_code=checkout_data.get("currency", "EUR"),
+                order_identifier=checkout_ref,
+                checkout_reference=checkout_id,
+                customer_email=pending_order.get("email"),
+                customer_name=pending_order.get("customer_name", ""),
+                current_user_email=pending_order.get("user"),
+                user_identifier=pending_order.get("user_id"),
+                payment_method="SUMUP_CARD",
+                shipping_address=pending_order.get("shipping_address")
+            )
+            
+            clear_user_cart_state(pending_order.get("email"), pending_order.get("user_id"), checkout_ref)
+            
+            if success_url:
+                return redirect(f"{success_url}?orderId={checkout_ref}")
+            
+            return jsonify({"message": "Payment successful", "orderId": checkout_ref}), 200
 
+        except Exception as e:
+            app.logger.error(f"Callback Error: {e}")
+            return jsonify({"error": "Internal error processing payment"}), 500
 
+    @app.route("/api/payments/sumup/webhook", methods=["POST"])
+    def sumup_webhook():
+        event = request.get_json(silent=True) or {}
+        
+        event_type = event.get("type")
+        if event_type != "checkout.completed":
+            return jsonify({"status": "ignored"}), 200
+            
+        payload = event.get("payload") or {}
+        checkout_id = payload.get("id")
+        checkout_ref = payload.get("checkout_reference")
+        
+        if not checkout_id or not checkout_ref:
+             app.logger.warning("SumUp Webhook: Missing checkout_id or reference")
+             return jsonify({"status": "ignored"}), 200
+
+        try:
+            # 1. Check if already paid to avoid redundant API calls
+            pending_order = db.orders.find_one({"order_id": checkout_ref})
+            if not pending_order:
+                app.logger.warning(f"SumUp Webhook: Order {checkout_ref} not found")
+                return jsonify({"error": "Order not found"}), 404
+                
+            if pending_order.get("payment_status") in ("paid", "captured"):
+                app.logger.info(f"SumUp Webhook: Order {checkout_ref} already paid")
+                return jsonify({"status": "already_paid"}), 200
+
+            # 2. Verify status with SumUp API
+            # This is critical for security as we don't rely solely on the webhook payload
+            access_token = get_sumup_access_token()
+            base_url = get_sumup_base_url()
+            
+            verification_response = requests.get(
+                f"{base_url}/v0.1/checkouts/{checkout_id}",
+                headers={"Authorization": f"Bearer {access_token}"}
+            )
+            
+            if verification_response.status_code != 200:
+                app.logger.error(f"SumUp Webhook Verification Failed: {verification_response.text}")
+                return jsonify({"error": "Verification failed"}), 502
+                
+            verified_data = verification_response.json()
+            verified_status = verified_data.get("status")
+            
+            if verified_status not in ("PAID", "SUCCESSFUL"):
+                app.logger.warning(f"SumUp Webhook: Transaction {checkout_id} status is {verified_status}, not PAID")
+                return jsonify({"status": "ignored", "details": verified_status}), 200
+
+            # 3. Process the order
+            app.logger.info(f"SumUp Webhook: Verified payment for Order {checkout_ref}")
+            
+            persist_paid_order(
+                normalized_items=pending_order.get("items", []),
+                total_value=float(verified_data.get("amount", 0)),
+                currency_code=verified_data.get("currency", "EUR"),
+                order_identifier=checkout_ref,
+                checkout_reference=checkout_id,
+                customer_email=pending_order.get("email"),
+                customer_name=pending_order.get("customer_name", ""),
+                current_user_email=pending_order.get("user"),
+                user_identifier=pending_order.get("user_id"),
+                payment_method="SUMUP_CARD",
+                shipping_address=pending_order.get("shipping_address")
+            )
+            
+            clear_user_cart_state(pending_order.get("email"), pending_order.get("user_id"), checkout_ref)
+            
+            return jsonify({"status": "ok"}), 200
+            
+        except Exception as e:
+            app.logger.error(f"SumUp Webhook Error: {e}")
+            return jsonify({"error": "Internal error"}), 500
 
     @app.route("/api/orders/create", methods=["POST"])
     def create_paid_order():

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
 import { formatEuro } from "../utils/currency";
@@ -32,7 +31,7 @@ const profileHasAddress = (profile) => {
 };
 
 const Checkout = () => {
-  const { isAuthenticated, profile, login } = useAuth();
+  const { isAuthenticated, profile } = useAuth();
   const { items, subtotal, totalItems } = useCart();
   const navigate = useNavigate();
   const [contactValues, setContactValues] = useState(() => buildContactState(profile));
@@ -134,21 +133,7 @@ const Checkout = () => {
     setFeedback("");
 
     try {
-      const payload = {
-        items: checkoutItems,
-        customer: validation.contact,
-        address: validation.address,
-        ...(isAuthenticated ? { saveAddress } : {}),
-      };
-      const { data } = await apiClient.post("/api/payments/fake-checkout", payload);
-      if (isAuthenticated && data?.access_token && data?.user) {
-        login(data.access_token, data.user);
-      }
-      setStatus("success");
-      setFeedback(
-        data?.message ??
-          "Delivery details confirmed. Continue to payment to place your order."
-      );
+      // Save details for the next step
       try {
         window.localStorage.setItem(
           "limeCheckoutContact",
@@ -161,13 +146,14 @@ const Checkout = () => {
       } catch {
         // Ignore persistence errors.
       }
+
+      setStatus("success");
       navigate("/payment");
+
     } catch (error) {
-      const message =
-        error.response?.data?.message ??
-        "We couldn't open the payment step right now. Please try again.";
+      console.error("Checkout Error:", error);
       setStatus("error");
-      setFeedback(message);
+      setFeedback("Something went wrong. Please try again.");
     }
   };
 
@@ -362,13 +348,12 @@ const Checkout = () => {
             </p>
             {feedback && (
               <p
-                className={`form-feedback${
-                  status === "error"
-                    ? " form-feedback--error"
-                    : status === "success"
+                className={`form-feedback${status === "error"
+                  ? " form-feedback--error"
+                  : status === "success"
                     ? " form-feedback--success"
                     : ""
-                }`}
+                  }`}
               >
                 {feedback}
               </p>
