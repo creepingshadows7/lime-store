@@ -1,1 +1,1 @@
-vB2.3.2 Removed unnecessary components
+vB2.4 Added reviews for products

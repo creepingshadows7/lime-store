@@ -124,6 +124,7 @@ def create_app() -> Flask:
     mongo = PyMongo(app)
     db = mongo.db
     featured_selection_collection = db.featured_products
+    reviews_collection = db.product_reviews
 
     email_regex = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     brand_colors = {
@@ -207,6 +208,8 @@ def create_app() -> Flask:
 
     ALLOWED_USER_ROLES = {"admin", "seller", "standard"}
     MAX_PRODUCT_VARIATIONS = 25
+    MAX_REVIEW_BODY_LENGTH = 500
+    MAX_REVIEW_TITLE_LENGTH = 140
     FEATURED_SHOWCASE_LIMIT = 4
     FEATURED_SELECTION_ID = "home_showcase_selection"
     SHOWCASE_LABEL_MAX_LENGTH = 60
@@ -254,6 +257,31 @@ def create_app() -> Flask:
 
     def require_admin_user():
         return require_role("admin")
+
+    def require_verified_account(*roles: str):
+        current_user, permission_error = require_role(*roles) if roles else require_role()
+        if permission_error:
+            return None, permission_error
+        if not current_user:
+            return None, (jsonify({"message": "Your account could not be found."}), 404)
+        if current_user.get("email_verified") is False:
+            return (
+                None,
+                (
+                    jsonify({"message": "Please verify your email before continuing."}),
+                    403,
+                ),
+            )
+        return current_user, None
+
+    def get_current_user_document():
+        try:
+            current_email = normalize_email(get_jwt_identity())
+        except Exception:
+            return None
+        if not current_email:
+            return None
+        return db.users.find_one({"email": current_email})
 
     def generate_otp_code(length: int = otp_code_length) -> str:
         upper_bound = 10**length
@@ -1305,6 +1333,131 @@ def create_app() -> Flask:
 
         category_map = fetch_categories_by_ids(category_ids)
         return user_names, category_map
+
+    def can_delete_review(review_document, user_document) -> bool:
+        if not review_document or not user_document:
+            return False
+
+        user_role = get_user_role(user_document)
+        if user_role == "admin":
+            return True
+
+        review_author = normalize_email(review_document.get("created_by"))
+        current_email = normalize_email(user_document.get("email"))
+        return bool(review_author and current_email and review_author == current_email)
+
+    def build_review_author_context(review_documents):
+        if not review_documents:
+            return {}
+
+        emails = {
+            normalize_email(document.get("created_by"))
+            for document in review_documents
+            if document.get("created_by")
+        }
+        emails = {email for email in emails if email}
+
+        author_context: Dict[str, Dict[str, str]] = {}
+        if emails:
+            cursor = db.users.find({"email": {"$in": list(emails)}})
+            for user_document in cursor:
+                normalized_email = normalize_email(user_document.get("email"))
+                if not normalized_email:
+                    continue
+                author_context[normalized_email] = {
+                    "name": user_document.get("name", "") or "",
+                    "role": get_user_role(user_document),
+                }
+
+        if DEFAULT_ADMIN_EMAIL not in author_context:
+            author_context.setdefault(
+                DEFAULT_ADMIN_EMAIL,
+                {"name": DEFAULT_ADMIN_NAME, "role": "admin"},
+            )
+        return author_context
+
+    def serialize_review(
+        review_document, author_context=None, viewer_document=None
+    ) -> Dict[str, object]:
+        if not review_document:
+            return {}
+
+        created_at = review_document.get("created_at")
+        if isinstance(created_at, datetime):
+            created_at_iso = (
+                created_at.isoformat()
+                if created_at.tzinfo is not None
+                else f"{created_at.isoformat()}Z"
+            )
+        else:
+            created_at_iso = str(created_at) if created_at else None
+
+        author_email = normalize_email(review_document.get("created_by"))
+        author_profile = (author_context or {}).get(author_email, {})
+        try:
+            rating_value = int(review_document.get("rating", 0) or 0)
+        except (TypeError, ValueError):
+            rating_value = 0
+
+        return {
+            "id": str(review_document.get("_id")),
+            "product_id": (
+                str(review_document.get("product_id"))
+                if review_document.get("product_id")
+                else ""
+            ),
+            "title": review_document.get("title", "") or "",
+            "body": review_document.get("body", "") or "",
+            "rating": max(0, min(5, rating_value)),
+            "image_url": build_upload_url(review_document.get("image_filename")),
+            "created_at": created_at_iso,
+            "created_by": author_email,
+            "created_by_name": author_profile.get("name", "") or "",
+            "created_by_role": author_profile.get("role", "") or "",
+            "can_delete": can_delete_review(review_document, viewer_document),
+        }
+
+    def summarize_reviews(review_documents):
+        summary = {"total_reviews": 0, "average_rating": 0}
+        if not review_documents:
+            return summary
+
+        ratings: List[float] = []
+        for document in review_documents:
+            try:
+                rating_value = float(document.get("rating", 0) or 0)
+            except (TypeError, ValueError):
+                rating_value = 0
+            if rating_value > 0 and math.isfinite(rating_value):
+                ratings.append(rating_value)
+
+        total_reviews = len(review_documents)
+        average_rating = 0
+        if ratings:
+            average_rating = round(sum(ratings) / len(ratings), 2)
+
+        summary["total_reviews"] = total_reviews
+        summary["average_rating"] = average_rating
+        return summary
+
+    def can_user_review_product(product_document, user_document):
+        if not product_document or not user_document:
+            return False, "You need to be logged in to leave a review."
+
+        user_email = normalize_email(user_document.get("email"))
+        if not user_email:
+            return False, "You need to be logged in to leave a review."
+
+        if user_document.get("email_verified") is False:
+            return False, "Please verify your email before leaving a review."
+
+        user_role = get_user_role(user_document)
+        if user_role == "seller":
+            owner_email = normalize_email(product_document.get("created_by"))
+            if owner_email and owner_email == user_email:
+                return False, "Sellers cannot review their own products."
+
+        return True, None
 
     def resolve_featured_product_documents(limit=FEATURED_SHOWCASE_LIMIT):
         ensure_seed_products()
@@ -2834,6 +2987,190 @@ def create_app() -> Flask:
                 )
             }
         )
+
+    @app.route("/api/products/<product_id>/reviews", methods=["GET"])
+    def list_product_reviews(product_id: str):
+        product_document, load_error = fetch_product(product_id)
+        if load_error:
+            return load_error
+
+        verify_jwt_in_request(optional=True)
+        viewer_document = get_current_user_document()
+
+        review_documents = list(
+            reviews_collection.find({"product_id": product_document["_id"]}).sort(
+                "created_at", -1
+            )
+        )
+        author_context = build_review_author_context(review_documents)
+        serialized_reviews = [
+            serialize_review(document, author_context, viewer_document)
+            for document in review_documents
+        ]
+        summary = summarize_reviews(review_documents)
+        return jsonify({"reviews": serialized_reviews, "summary": summary})
+
+    @app.route("/api/products/<product_id>/reviews", methods=["POST"])
+    @jwt_required()
+    def add_product_review(product_id: str):
+        product_document, load_error = fetch_product(product_id)
+        if load_error:
+            return load_error
+
+        current_user, permission_error = require_verified_account()
+        if permission_error:
+            return permission_error
+
+        can_review, restriction_message = can_user_review_product(
+            product_document, current_user
+        )
+        if not can_review:
+            return jsonify({"message": restriction_message}), 403
+
+        payload = request.form.to_dict() if request.form else {}
+        if not payload and request.is_json:
+            payload = request.get_json(silent=True) or {}
+
+        title = str(payload.get("title", "")).strip()
+        body = str(payload.get("body", payload.get("description", "")) or "").strip()
+        raw_rating = payload.get("rating")
+
+        if not title:
+            return jsonify({"message": "Please add a title for your review."}), 400
+        if len(title) > MAX_REVIEW_TITLE_LENGTH:
+            return (
+                jsonify(
+                    {
+                        "message": f"Review titles are limited to {MAX_REVIEW_TITLE_LENGTH} characters."
+                    }
+                ),
+                400,
+            )
+
+        if not body:
+            return jsonify(
+                {"message": "Please add a short description for your review."}
+            ), 400
+        if len(body) > MAX_REVIEW_BODY_LENGTH:
+            return (
+                jsonify(
+                    {
+                        "message": f"Reviews are limited to {MAX_REVIEW_BODY_LENGTH} characters."
+                    }
+                ),
+                400,
+            )
+
+        try:
+            rating_value = int(float(raw_rating))
+        except (TypeError, ValueError):
+            return jsonify({"message": "Rating must be a number between 1 and 5."}), 400
+
+        if rating_value < 1 or rating_value > 5:
+            return jsonify({"message": "Rating must be between 1 and 5 stars."}), 400
+
+        image_file = None
+        if request.files:
+            image_file = request.files.get("image") or request.files.get("review_image")
+
+        image_filename = None
+        if image_file and getattr(image_file, "filename", ""):
+            image_filename, image_error = save_product_image(image_file)
+            if image_error:
+                return jsonify({"message": image_error}), 400
+
+        review_document = {
+            "product_id": product_document["_id"],
+            "title": title,
+            "body": body,
+            "rating": rating_value,
+            "created_by": normalize_email(current_user.get("email")),
+            "created_at": datetime.utcnow(),
+        }
+        if image_filename:
+            review_document["image_filename"] = image_filename
+
+        insert_result = reviews_collection.insert_one(review_document)
+        created_review = reviews_collection.find_one({"_id": insert_result.inserted_id})
+
+        author_context = build_review_author_context([created_review])
+        serialized_review = serialize_review(
+            created_review, author_context, current_user
+        )
+
+        review_documents = list(
+            reviews_collection.find({"product_id": product_document["_id"]})
+        )
+        summary = summarize_reviews(review_documents)
+
+        record_audit_log(
+            normalize_email(current_user.get("email")),
+            "Added product review",
+            {"product_id": str(product_document.get("_id")), "rating": rating_value},
+        )
+
+        return (
+            jsonify(
+                {
+                    "message": "Review added successfully.",
+                    "review": serialized_review,
+                    "summary": summary,
+                }
+            ),
+            201,
+        )
+
+    @app.route("/api/products/<product_id>/reviews/<review_id>", methods=["DELETE"])
+    @jwt_required()
+    def delete_product_review(product_id: str, review_id: str):
+        product_document, load_error = fetch_product(product_id)
+        if load_error:
+            return load_error
+
+        try:
+            review_object_id = ObjectId(review_id)
+        except (InvalidId, TypeError):
+            return jsonify({"message": "Invalid review identifier."}), 400
+
+        review_document = reviews_collection.find_one(
+            {"_id": review_object_id, "product_id": product_document["_id"]}
+        )
+        if not review_document:
+            return jsonify({"message": "Review not found."}), 404
+
+        current_user, permission_error = require_role()
+        if permission_error:
+            return permission_error
+        if not current_user:
+            return jsonify({"message": "Your account could not be found."}), 404
+
+        if not can_delete_review(review_document, current_user):
+            return (
+                jsonify(
+                    {"message": "You do not have permission to remove this review."}
+                ),
+                403,
+            )
+
+        image_filename = review_document.get("image_filename")
+        reviews_collection.delete_one({"_id": review_object_id})
+        if image_filename:
+            remove_product_image(image_filename)
+
+        review_documents = list(
+            reviews_collection.find({"product_id": product_document["_id"]})
+        )
+        summary = summarize_reviews(review_documents)
+
+        record_audit_log(
+            normalize_email(current_user.get("email")),
+            "Deleted product review",
+            {
+                "product_id": str(product_document.get("_id")),
+                "review_id": str(review_object_id),
+            },
+        )
+        return jsonify({"message": "Review removed.", "summary": summary})
 
     @app.route("/api/products", methods=["POST"])
     @jwt_required()
