@@ -1,4 +1,5 @@
 import axios from "axios";
+import { AUTH_EXPIRED_EVENT } from "../constants";
 
 const resolveBaseUrl = () => {
   const explicitUrl = import.meta.env.VITE_API_URL;
@@ -30,9 +31,44 @@ const apiClient = axios.create({
   },
 });
 
+const clearStoredCredentials = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.removeItem("limeShopToken");
+  window.localStorage.removeItem("limeShopUser");
+};
+
+const emitAuthExpired = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const event =
+    typeof CustomEvent === "function"
+      ? new CustomEvent(AUTH_EXPIRED_EVENT)
+      : new Event(AUTH_EXPIRED_EVENT);
+  window.dispatchEvent(event);
+};
+
+const isAuthError = (error) => {
+  const status = error?.response?.status;
+  if (status === 401 || status === 422) {
+    return true;
+  }
+
+  const message =
+    error?.response?.data?.message || error?.response?.data?.msg || "";
+  const normalizedMessage =
+    typeof message === "string" ? message.toLowerCase() : "";
+  return normalizedMessage.includes("token has expired");
+};
+
 apiClient.interceptors.request.use((config) => {
   config.headers = config.headers ?? {};
-  const token = localStorage.getItem("limeShopToken");
+  const token =
+    typeof window !== "undefined"
+      ? window.localStorage.getItem("limeShopToken")
+      : null;
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -44,5 +80,21 @@ apiClient.interceptors.request.use((config) => {
   }
   return config;
 });
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const hasStoredToken =
+      typeof window !== "undefined" &&
+      Boolean(window.localStorage.getItem("limeShopToken"));
+
+    if (hasStoredToken && isAuthError(error)) {
+      clearStoredCredentials();
+      emitAuthExpired();
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 export default apiClient;

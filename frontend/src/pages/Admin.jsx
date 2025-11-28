@@ -13,6 +13,7 @@ const ROLE_OPTIONS = [
 const ADMIN_TABS = [
   { value: "members", label: "Members" },
   { value: "logs", label: "Logs" },
+  { value: "content", label: "Content" },
 ];
 
 const normalizeAdminUser = (user) => {
@@ -61,6 +62,15 @@ const Admin = () => {
   });
   const [logDeleteStatus, setLogDeleteStatus] = useState("idle");
   const [logDeleteFeedback, setLogDeleteFeedback] = useState("");
+  const [termsStatus, setTermsStatus] = useState("idle");
+  const [termsFeedback, setTermsFeedback] = useState("");
+  const [termsTitle, setTermsTitle] = useState("Terms and Conditions");
+  const [termsContent, setTermsContent] = useState("");
+  const [termsSavingStatus, setTermsSavingStatus] = useState("idle");
+  const [termsMeta, setTermsMeta] = useState({
+    updated_at: null,
+    updated_by: null,
+  });
 
   const normalizedEmail = profile?.email
     ? profile.email.trim().toLowerCase()
@@ -79,6 +89,66 @@ const Admin = () => {
     return Number.isNaN(parsedDate.getTime())
       ? String(timestamp)
       : parsedDate.toLocaleString();
+  };
+
+  const loadTermsPage = async () => {
+    setTermsStatus("loading");
+    setTermsFeedback("");
+
+    try {
+      const { data } = await apiClient.get("/api/content/terms");
+      const page = data?.page ?? {};
+      setTermsTitle(page.title || "Terms and Conditions");
+      setTermsContent(page.content || "");
+      setTermsMeta({
+        updated_at: page.updated_at || null,
+        updated_by: page.updated_by || null,
+      });
+      setTermsStatus("success");
+    } catch (error) {
+      setTermsStatus("error");
+      setTermsFeedback(
+        error.response?.data?.message ??
+          "We couldn't load the terms page content."
+      );
+    }
+  };
+
+  const handleTermsSubmit = async (event) => {
+    event.preventDefault();
+    const payload = {
+      title: termsTitle.trim() || "Terms and Conditions",
+      content: termsContent.trim(),
+    };
+
+    if (!payload.content) {
+      setTermsSavingStatus("error");
+      setTermsFeedback("Please add the policy content before saving.");
+      return;
+    }
+
+    setTermsSavingStatus("loading");
+    setTermsFeedback("");
+
+    try {
+      const { data } = await apiClient.put("/api/admin/content/terms", payload);
+      const page = data?.page ?? {};
+      setTermsTitle(page.title || payload.title);
+      setTermsContent(page.content || payload.content);
+      setTermsMeta({
+        updated_at: page.updated_at || null,
+        updated_by: page.updated_by || null,
+      });
+      setTermsSavingStatus("success");
+      setTermsStatus("success");
+      setTermsFeedback(data?.message ?? "Terms and Conditions updated.");
+    } catch (error) {
+      setTermsSavingStatus("error");
+      setTermsFeedback(
+        error.response?.data?.message ??
+          "We couldn't save the terms right now. Please try again."
+      );
+    }
   };
 
   useEffect(() => {
@@ -171,6 +241,14 @@ const Admin = () => {
 
     fetchLogs();
   }, [isAdmin, activeTab, logsQuery]);
+
+  useEffect(() => {
+    if (!isAdmin || activeTab !== "content") {
+      return;
+    }
+
+    loadTermsPage();
+  }, [isAdmin, activeTab]);
 
   const handleProfileToggle = (userId) => {
     setExpandedUserId((prev) => (prev === userId ? null : userId));
@@ -620,6 +698,109 @@ const Admin = () => {
     </div>
   );
 
+  const renderContentSection = () => {
+    const lastUpdated = termsMeta.updated_at
+      ? formatDateTime(termsMeta.updated_at)
+      : "Not yet updated";
+    const updatedBy =
+      termsMeta.updated_by && termsMeta.updated_by.trim()
+        ? termsMeta.updated_by
+        : "";
+    const feedbackState =
+      termsSavingStatus === "error" || termsStatus === "error"
+        ? "error"
+        : termsSavingStatus === "success"
+        ? "success"
+        : "idle";
+
+    return (
+      <div className="admin-page__card admin-content">
+        <div className="admin-logs__filters">
+          <div>
+            <p className="eyebrow eyebrow--muted">Legal content</p>
+            <h3>Terms and Conditions</h3>
+            <p className="account-address__subtitle">
+              Edit the copy shown on the public Terms and Conditions page. All visitors
+              will see the latest saved version.
+            </p>
+            <p className="terms-card__meta">
+              Last updated: <span>{lastUpdated}</span>
+              {updatedBy ? ` — by ${updatedBy}` : ""}
+            </p>
+          </div>
+          <div className="admin-logs__actions">
+            <button
+              type="button"
+              className="button button--outline"
+              onClick={loadTermsPage}
+              disabled={termsStatus === "loading" || termsSavingStatus === "loading"}
+            >
+              {termsStatus === "loading" ? "Refreshing..." : "Reload latest"}
+            </button>
+          </div>
+        </div>
+        <form
+          className="account-form account-form--address"
+          onSubmit={handleTermsSubmit}
+        >
+          <label className="input-group">
+            <span>Page title</span>
+            <input
+              value={termsTitle}
+              onChange={(event) => setTermsTitle(event.target.value)}
+              maxLength={140}
+              required
+            />
+          </label>
+          <label className="input-group">
+            <span>Page content</span>
+            <textarea
+              rows={12}
+              value={termsContent}
+              onChange={(event) => setTermsContent(event.target.value)}
+              maxLength={20000}
+              placeholder="Explain the rules for using the site, payment expectations, and your contact details."
+              required
+            />
+            <p className="input-hint">
+              {termsContent.length} / 20000 characters
+            </p>
+          </label>
+          <div className="admin-logs__actions">
+            <button
+              type="submit"
+              className="button button--gradient"
+              disabled={termsSavingStatus === "loading"}
+            >
+              {termsSavingStatus === "loading" ? "Saving..." : "Save changes"}
+            </button>
+            <button
+              type="button"
+              className="button button--outline"
+              onClick={loadTermsPage}
+              disabled={termsStatus === "loading" || termsSavingStatus === "loading"}
+            >
+              {termsStatus === "loading" ? "Refreshing..." : "Discard edits"}
+            </button>
+          </div>
+          {termsFeedback ? (
+            <p
+              className={`form-feedback${
+                feedbackState === "error"
+                  ? " form-feedback--error"
+                  : feedbackState === "success"
+                  ? " form-feedback--success"
+                  : ""
+              }`}
+            >
+              {termsFeedback}
+            </p>
+          ) : null}
+        </form>
+      </div>
+    );
+  };
+
 
   if (!isAdmin) {
     return null;
@@ -1017,8 +1198,10 @@ const Admin = () => {
             </p>
           ) : null}
         </div>
-      ) : (
+      ) : activeTab === "logs" ? (
         renderLogsSection()
+      ) : (
+        renderContentSection()
       )}
     </section>
   );

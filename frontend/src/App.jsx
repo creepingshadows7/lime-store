@@ -16,6 +16,7 @@ import MyOrders from "./pages/MyOrders";
 import MyOrderDetail from "./pages/MyOrderDetail";
 import AdminOrders from "./pages/AdminOrders";
 import AdminOrderDetail from "./pages/AdminOrderDetail";
+import Terms from "./pages/Terms";
 import "./App.css";
 import { useAuth } from "./context/AuthContext";
 import { DEFAULT_ADMIN_EMAIL } from "./constants";
@@ -140,13 +141,19 @@ const App = () => {
           <Route path="/admin" element={<Admin />} />
           <Route path="/admin/orders" element={<AdminOrders />} />
           <Route path="/admin/orders/:orderId" element={<AdminOrderDetail />} />
+          <Route path="/terms" element={<Terms />} />
         </Routes>
       </main>
       <footer className="lux-footer">
-        <p>
-          Copyright {new Date().getFullYear()} Lime Store. Crafted for the lime
-          connoisseur.
-        </p>
+        <div className="lux-footer__inner">
+          <p>
+            Copyright {new Date().getFullYear()} Lime Store. Crafted for the lime
+            connoisseur.
+          </p>
+          <NavLink to="/terms" className="lux-footer__link">
+            Terms & Conditions
+          </NavLink>
+        </div>
       </footer>
     </div>
   );

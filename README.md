@@ -1,1 +1,1 @@
-vB2.4 Added reviews for products
+vB2.4.1 Added terms and conditions page

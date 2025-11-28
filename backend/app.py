@@ -125,6 +125,7 @@ def create_app() -> Flask:
     db = mongo.db
     featured_selection_collection = db.featured_products
     reviews_collection = db.product_reviews
+    site_pages_collection = db.site_pages
 
     email_regex = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     brand_colors = {
@@ -157,6 +158,14 @@ def create_app() -> Flask:
     password_reset_subject = "Lime Store Password Reset"
     max_failed_otp_attempts = 5
     email_verification_collection = db.email_verification_tokens
+    DEFAULT_TERMS_PAGE_ID = "terms"
+    DEFAULT_TERMS_TITLE = "Terms and Conditions"
+    DEFAULT_TERMS_CONTENT = (
+        "These terms explain how Lime Store provides access to our products and services. "
+        "By using the site you agree to shop responsibly, keep your account secure, and "
+        "contact support if something seems wrong. We may update these terms over time; "
+        "please review them periodically."
+    )
 
     try:
         email_verification_collection.create_index(
@@ -380,6 +389,32 @@ def create_app() -> Flask:
         if end_of_day and re.fullmatch(r"\d{4}-\d{2}-\d{2}", candidate):
             return parsed + timedelta(days=1)
         return parsed
+
+    def serialize_site_page(
+        document,
+        default_title: str = DEFAULT_TERMS_TITLE,
+        default_content: str = DEFAULT_TERMS_CONTENT,
+        page_id: str = DEFAULT_TERMS_PAGE_ID,
+    ):
+        if not document:
+            return {
+                "id": page_id,
+                "title": default_title,
+                "content": default_content,
+                "updated_at": None,
+                "updated_by": None,
+            }
+
+        updated_at = document.get("updated_at")
+        return {
+            "id": str(document.get("_id") or page_id),
+            "title": str(document.get("title") or default_title),
+            "content": str(document.get("content") or default_content),
+            "updated_at": updated_at.isoformat() + "Z"
+            if isinstance(updated_at, datetime)
+            else None,
+            "updated_by": document.get("updated_by") or None,
+        }
 
     def build_verification_email_html(otp: str) -> str:
         colors = brand_colors
@@ -4236,6 +4271,67 @@ def create_app() -> Flask:
             return jsonify({"message": "Order could not be loaded."}), 404
 
         return jsonify({"order": serialized})
+
+    # --- Content Routes ---
+
+    @app.route("/api/content/terms", methods=["GET"])
+    def get_terms_page():
+        page_document = site_pages_collection.find_one(
+            {"_id": DEFAULT_TERMS_PAGE_ID}
+        )
+        return jsonify({"page": serialize_site_page(page_document)})
+
+    @app.route("/api/admin/content/terms", methods=["PUT"])
+    @jwt_required()
+    def admin_update_terms_page():
+        admin_user, admin_error = require_admin_user()
+        if admin_error:
+            return admin_error
+
+        payload = request.get_json(silent=True) or {}
+        title = str(payload.get("title", "")).strip() or DEFAULT_TERMS_TITLE
+        content = str(payload.get("content", "")).strip()
+
+        if not content:
+            return jsonify({"message": "Content cannot be empty."}), 400
+        if len(content) > 20000:
+            return (
+                jsonify({"message": "Content is too long (limit 20,000 characters)."}),
+                400,
+            )
+
+        sanitized_content = re.sub(
+            r"<script[\s\S]*?>[\s\S]*?</script>", "", content, flags=re.IGNORECASE
+        )
+
+        now = datetime.utcnow()
+        editor_email = normalize_email(admin_user.get("email") if admin_user else "")
+        site_pages_collection.update_one(
+            {"_id": DEFAULT_TERMS_PAGE_ID},
+            {
+                "$set": {
+                    "title": title,
+                    "content": sanitized_content,
+                    "updated_at": now,
+                    "updated_by": editor_email or None,
+                }
+            },
+            upsert=True,
+        )
+        updated_page = site_pages_collection.find_one({"_id": DEFAULT_TERMS_PAGE_ID})
+
+        record_audit_log(
+            editor_email,
+            "Updated terms page",
+            {"page_id": DEFAULT_TERMS_PAGE_ID, "title": title},
+        )
+
+        return jsonify(
+            {
+                "message": "Terms and Conditions have been updated.",
+                "page": serialize_site_page(updated_page),
+            }
+        )
 
     # --- Admin Routes ---
 
