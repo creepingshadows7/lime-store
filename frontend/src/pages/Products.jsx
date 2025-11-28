@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
+import { useWishlist } from "../context/WishlistContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
 import { formatPublishedDate } from "../utils/dates";
 import { getPricingDetails } from "../utils/pricing";
@@ -89,6 +90,7 @@ const formatVariationPayload = (entries) => {
 const Products = () => {
   const { isAuthenticated, profile, logout } = useAuth();
   const { addItem } = useCart();
+  const { addItem: saveToWishlist } = useWishlist();
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
   const [status, setStatus] = useState("loading");
@@ -125,6 +127,7 @@ const Products = () => {
   });
   const [categoryBusyId, setCategoryBusyId] = useState("");
   const [productVariations, setProductVariations] = useState([]);
+  const [wishlistBusyId, setWishlistBusyId] = useState("");
 
   const applyCategories = useCallback((nextCategories) => {
     setCategories(normalizeCategoriesList(nextCategories ?? []));
@@ -729,6 +732,50 @@ const Products = () => {
     navigate("/cart");
   };
 
+  const handleAddToWishlist = async (event, product, variationsList = []) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!product) {
+      return;
+    }
+    const hasVariations =
+      Array.isArray(variationsList) && variationsList.length > 0;
+    if (hasVariations) {
+      navigate(`/products/${product.id}`);
+      return;
+    }
+    if (!isAuthenticated) {
+      navigate("/login", {
+        replace: false,
+        state: { next: `/products/${product.id}` },
+      });
+      return;
+    }
+    setWishlistBusyId(product.id);
+    try {
+      const result = await saveToWishlist({
+        productId: product.id,
+        variationId: "",
+        variationName: "",
+      });
+      setManagementFeedback({
+        state: result.success ? "success" : "error",
+        message:
+          result.message ||
+          (result.success
+            ? `${product.name} saved to your wishlist.`
+            : "We could not save that item to your wishlist."),
+      });
+    } catch (err) {
+      setManagementFeedback({
+        state: "error",
+        message: "We could not save that item to your wishlist.",
+      });
+    } finally {
+      setWishlistBusyId("");
+    }
+  };
+
   const handleProductUpdated = (updatedProduct) => {
     if (!updatedProduct) {
       return;
@@ -1315,46 +1362,64 @@ const Products = () => {
                             {variationName}
                           </span>
                         ))}
-                        {variationNames.length > 3 && (
-                          <span className="product-card__variation-chip product-card__variation-chip--more">
-                            +{variationNames.length - 3} more
+                    {variationNames.length > 3 && (
+                      <span className="product-card__variation-chip product-card__variation-chip--more">
+                        +{variationNames.length - 3} more
+                      </span>
+                    )}
+                  </div>
+                )}
+                <div className="product-card__footer">
+                  <div className="price-stack price-stack--tight">
+                    <span className="price-stack__current">
+                      {pricing.currentLabel}
+                    </span>
+                    {pricing.hasDiscount && (
+                      <>
+                        <span className="price-stack__original">
+                          {pricing.baseLabel}
+                        </span>
+                        {pricing.savingsPercent && (
+                          <span className="price-stack__badge">
+                            Save {pricing.savingsPercent}%
                           </span>
                         )}
-                      </div>
+                      </>
                     )}
-                    <div className="product-card__footer">
-                      <div className="price-stack price-stack--tight">
-                        <span className="price-stack__current">
-                          {pricing.currentLabel}
-                        </span>
-                        {pricing.hasDiscount && (
-                          <>
-                            <span className="price-stack__original">
-                              {pricing.baseLabel}
-                            </span>
-                            {pricing.savingsPercent && (
-                              <span className="price-stack__badge">
-                                Save {pricing.savingsPercent}%
-                              </span>
-                            )}
-                          </>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        className="button button--outline product-card__button"
-                        onClick={(event) =>
-                          handleAddToCart(
-                            event,
-                            product,
-                            primaryImageUrl,
-                            normalizedVariations
-                          )
-                        }
-                      >
-                        Add to Cart
-                      </button>
-                    </div>
+                  </div>
+                  <div className="product-card__cta-group">
+                    <button
+                      type="button"
+                      className="button button--outline product-card__button"
+                      onClick={(event) =>
+                        handleAddToCart(
+                          event,
+                          product,
+                          primaryImageUrl,
+                          normalizedVariations
+                        )
+                      }
+                    >
+                      Add to Cart
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--ghost product-card__button"
+                      onClick={(event) =>
+                        handleAddToWishlist(
+                          event,
+                          product,
+                          normalizedVariations
+                        )
+                      }
+                      disabled={wishlistBusyId === product.id}
+                    >
+                      {wishlistBusyId === product.id
+                        ? "Saving..."
+                        : "Wishlist"}
+                    </button>
+                  </div>
+                </div>
                     {canManageProduct(product) && (
                       <div className="product-card__actions">
                         <button

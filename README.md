@@ -1,1 +1,1 @@
-vB2.4.1 Added terms and conditions page
+vB2.5 Added wishlist option

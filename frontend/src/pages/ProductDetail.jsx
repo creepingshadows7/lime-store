@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import apiClient from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
+import { useWishlist } from "../context/WishlistContext";
 import { DEFAULT_ADMIN_EMAIL } from "../constants";
 import { formatPublishedDate } from "../utils/dates";
 import { getPricingDetails } from "../utils/pricing";
@@ -35,6 +36,7 @@ const ProductDetail = () => {
   const { productId } = useParams();
   const { isAuthenticated, profile } = useAuth();
   const { addItem } = useCart();
+  const { addItem: saveToWishlist } = useWishlist();
   const navigate = useNavigate();
   const [status, setStatus] = useState("loading");
   const [product, setProduct] = useState(null);
@@ -61,6 +63,8 @@ const ProductDetail = () => {
     imageFile: null,
     imagePreview: "",
   });
+  const [wishlistStatus, setWishlistStatus] = useState("idle");
+  const [wishlistFeedback, setWishlistFeedback] = useState("");
 
   const applyCategories = useCallback((nextCategories) => {
     setCategories(normalizeCategoriesList(nextCategories ?? []));
@@ -378,6 +382,46 @@ const ProductDetail = () => {
       1
     );
     navigate("/cart");
+  };
+
+  const handleAddToWishlist = async () => {
+    if (!product) {
+      return;
+    }
+    if (!isAuthenticated) {
+      navigate("/login", {
+        replace: false,
+        state: { next: `/products/${product.id}` },
+      });
+      return;
+    }
+    if (normalizedVariations.length > 0 && !selectedVariation) {
+      setWishlistStatus("error");
+      setWishlistFeedback("Select an option before saving to your wishlist.");
+      return;
+    }
+
+    setWishlistStatus("loading");
+    setWishlistFeedback("");
+    try {
+      const result = await saveToWishlist({
+        productId: product.id,
+        variationId: selectedVariation?.id ?? "",
+        variationName: selectedVariation?.name ?? "",
+      });
+      setWishlistStatus(result.success ? "success" : "error");
+      setWishlistFeedback(
+        result.message ||
+          (result.success
+            ? `${product.name} saved to your wishlist.`
+            : "We could not save this item to your wishlist.")
+      );
+    } catch (err) {
+      setWishlistStatus("error");
+      setWishlistFeedback(
+        "We could not save this item to your wishlist. Please try again."
+      );
+    }
   };
 
   const handleOpenEditor = () => {
@@ -701,6 +745,16 @@ const ProductDetail = () => {
             >
               Add to Cart
             </button>
+            <button
+              type="button"
+              className="button button--ghost"
+              onClick={handleAddToWishlist}
+              disabled={wishlistStatus === "loading"}
+            >
+              {wishlistStatus === "loading"
+                ? "Saving..."
+                : "Save to wishlist"}
+            </button>
             {canManageProduct && (
               <button
                 type="button"
@@ -711,6 +765,17 @@ const ProductDetail = () => {
               </button>
             )}
           </div>
+          {wishlistFeedback && (
+            <p
+              className={`form-feedback product-detail__wishlist-feedback${
+                wishlistStatus === "error"
+                  ? " form-feedback--error"
+                  : " form-feedback--success"
+              }`}
+            >
+              {wishlistFeedback}
+            </p>
+          )}
           <div className="product-detail__review-cta">
             <button
               type="button"

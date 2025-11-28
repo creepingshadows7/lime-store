@@ -1369,6 +1369,129 @@ def create_app() -> Flask:
         category_map = fetch_categories_by_ids(category_ids)
         return user_names, category_map
 
+    def build_wishlist_signature(product_id, variation_id: Optional[str] = "") -> str:
+        base_id = str(product_id or "").strip()
+        variation_token = str(variation_id or "").strip()
+        return f"{base_id}::{variation_token}".lower()
+
+    def normalize_wishlist_entries(raw_entries) -> List[Dict[str, object]]:
+        normalized: List[Dict[str, object]] = []
+        if not isinstance(raw_entries, list):
+            return normalized
+
+        seen: Set[str] = set()
+        for entry in raw_entries:
+            entry_payload = entry if isinstance(entry, dict) else {"product_id": entry}
+            product_identifier = (
+                entry_payload.get("product_id") or entry_payload.get("productId")
+            )
+            product_id = normalize_object_id_value(product_identifier)
+            if not product_id:
+                continue
+
+            variation_id = str(
+                entry_payload.get("variation_id")
+                or entry_payload.get("variationId")
+                or ""
+            ).strip()
+            variation_name = str(
+                entry_payload.get("variation_name")
+                or entry_payload.get("variationName")
+                or ""
+            ).strip()
+            signature = build_wishlist_signature(product_id, variation_id)
+            if signature in seen:
+                continue
+            seen.add(signature)
+
+            added_at_raw = entry_payload.get("added_at") or entry_payload.get("addedAt")
+            added_at = None
+            if isinstance(added_at_raw, datetime):
+                added_at = added_at_raw
+            elif isinstance(added_at_raw, str):
+                try:
+                    added_at = datetime.fromisoformat(added_at_raw.replace("Z", ""))
+                except ValueError:
+                    added_at = None
+
+            normalized.append(
+                {
+                    "product_id": product_id,
+                    "variation_id": variation_id,
+                    "variation_name": variation_name,
+                    "added_at": added_at,
+                    "product_name": str(entry_payload.get("product_name") or "").strip(),
+                    "product_price": safe_float(entry_payload.get("product_price"), None),
+                    "product_image": str(
+                        entry_payload.get("product_image")
+                        or entry_payload.get("image_url")
+                        or ""
+                    ).strip(),
+                }
+            )
+
+        return normalized
+
+    def serialize_wishlist_entries(entries: List[Dict[str, object]]):
+        if not entries:
+            return []
+
+        product_ids: List[ObjectId] = []
+        for entry in entries:
+            product_id = entry.get("product_id")
+            if isinstance(product_id, ObjectId):
+                product_ids.append(product_id)
+
+        serialized_product_map: Dict[ObjectId, Dict] = {}
+        if product_ids:
+            product_documents = list(db.products.find({"_id": {"$in": product_ids}}))
+            user_names, category_map = build_product_serialization_context(
+                product_documents
+            )
+            for document in product_documents:
+                serialized_product_map[document["_id"]] = serialize_product(
+                    document, user_names=user_names, category_map=category_map
+                )
+
+        serialized_entries: List[Dict[str, object]] = []
+        for entry in entries:
+            product_id = entry.get("product_id")
+            serialized_product = (
+                serialized_product_map.get(product_id)
+                if isinstance(product_id, ObjectId)
+                else None
+            )
+            added_at_value = entry.get("added_at")
+            serialized_entries.append(
+                {
+                    "productId": str(product_id) if product_id else "",
+                    "variationId": entry.get("variation_id", ""),
+                    "variationName": entry.get("variation_name", ""),
+                    "addedAt": added_at_value.isoformat()
+                    if isinstance(added_at_value, datetime)
+                    else None,
+                    "product": serialized_product,
+                    "name": (
+                        serialized_product.get("name")
+                        if serialized_product
+                        else entry.get("product_name", "")
+                    ),
+                    "price": (
+                        serialized_product.get("price")
+                        if serialized_product
+                        else entry.get("product_price")
+                    ),
+                    "imageUrl": (
+                        serialized_product.get("image_url")
+                        if serialized_product
+                        else entry.get("product_image", "")
+                    ),
+                    "available": serialized_product is not None,
+                }
+            )
+
+        return serialized_entries
+
     def can_delete_review(review_document, user_document) -> bool:
         if not review_document or not user_document:
             return False
@@ -4271,6 +4394,162 @@ def create_app() -> Flask:
             return jsonify({"message": "Order could not be loaded."}), 404
 
         return jsonify({"order": serialized})
+
+    # Wishlist
+    @app.route("/api/wishlist", methods=["GET"])
+    @jwt_required()
+    def list_wishlist():
+        current_user, permission_error = require_verified_account()
+        if permission_error:
+            return permission_error
+
+        wishlist_entries = normalize_wishlist_entries(current_user.get("wishlist"))
+        db.users.update_one(
+            {"_id": current_user["_id"]}, {"$set": {"wishlist": wishlist_entries}}
+        )
+        serialized_items = serialize_wishlist_entries(wishlist_entries)
+
+        return jsonify({"items": serialized_items})
+
+    @app.route("/api/wishlist", methods=["POST"])
+    @jwt_required()
+    def add_to_wishlist():
+        current_user, permission_error = require_verified_account()
+        if permission_error:
+            return permission_error
+
+        payload = request.get_json(silent=True) or {}
+        product_identifier = payload.get("product_id") or payload.get("productId")
+        product_id = normalize_object_id_value(product_identifier)
+        if not product_id:
+            return (
+                jsonify(
+                    {"message": "Please choose a product to add to your wishlist."}
+                ),
+                400,
+            )
+
+        product_document = db.products.find_one({"_id": product_id})
+        if not product_document:
+            return jsonify({"message": "That product could not be found."}), 404
+
+        variation_id = str(
+            payload.get("variationId") or payload.get("variation_id") or ""
+        ).strip()
+        variation_name = str(
+            payload.get("variationName") or payload.get("variation_name") or ""
+        ).strip()
+
+        wishlist_entries = normalize_wishlist_entries(current_user.get("wishlist"))
+        signature_to_replace = build_wishlist_signature(product_id, variation_id)
+        filtered_entries = [
+            entry
+            for entry in wishlist_entries
+            if build_wishlist_signature(
+                entry.get("product_id"), entry.get("variation_id", "")
+            )
+            != signature_to_replace
+        ]
+
+        primary_image = ""
+        raw_image_urls = product_document.get("image_urls")
+        if isinstance(raw_image_urls, list) and raw_image_urls:
+            primary_image = str(raw_image_urls[0] or "").strip()
+        if not primary_image:
+            legacy_image_url = product_document.get("image_url")
+            if legacy_image_url:
+                primary_image = str(legacy_image_url).strip()
+        if not primary_image:
+            filename = product_document.get("image_filename")
+            if filename:
+                primary_image = build_upload_url(filename)
+
+        filtered_entries.append(
+            {
+                "product_id": product_id,
+                "variation_id": variation_id,
+                "variation_name": variation_name,
+                "added_at": datetime.utcnow(),
+                "product_name": str(product_document.get("name", "")).strip(),
+                "product_price": safe_float(product_document.get("price"), None),
+                "product_image": primary_image,
+            }
+        )
+
+        db.users.update_one(
+            {"_id": current_user["_id"]}, {"$set": {"wishlist": filtered_entries}}
+        )
+        serialized_items = serialize_wishlist_entries(filtered_entries)
+
+        record_audit_log(
+            normalize_email(current_user.get("email")),
+            "Added product to wishlist",
+            {"product_id": str(product_id), "variation_id": variation_id or None},
+        )
+
+        return (
+            jsonify({"message": "Saved to your wishlist.", "items": serialized_items}),
+            201,
+        )
+
+    @app.route("/api/wishlist/<product_id>", methods=["DELETE"])
+    @jwt_required()
+    def remove_from_wishlist(product_id: str):
+        current_user, permission_error = require_verified_account()
+        if permission_error:
+            return permission_error
+
+        normalized_product_id = normalize_object_id_value(product_id)
+        if not normalized_product_id:
+            return jsonify({"message": "Invalid product identifier."}), 400
+
+        variation_filter = (
+            request.args.get("variationId")
+            or request.args.get("variation_id")
+            or ""
+        ).strip()
+        if not variation_filter:
+            payload = request.get_json(silent=True) or {}
+            variation_filter = str(
+                payload.get("variationId") or payload.get("variation_id") or ""
+            ).strip()
+
+        wishlist_entries = normalize_wishlist_entries(current_user.get("wishlist"))
+        updated_entries: List[Dict[str, object]] = []
+        removed_any = False
+        for entry in wishlist_entries:
+            entry_product_id = entry.get("product_id")
+            entry_variation_id = str(entry.get("variation_id", ""))
+            if entry_product_id != normalized_product_id:
+                updated_entries.append(entry)
+                continue
+            if variation_filter and entry_variation_id != variation_filter:
+                updated_entries.append(entry)
+                continue
+            removed_any = True
+
+        db.users.update_one(
+            {"_id": current_user["_id"]}, {"$set": {"wishlist": updated_entries}}
+        )
+        serialized_items = serialize_wishlist_entries(updated_entries)
+
+        if removed_any:
+            record_audit_log(
+                normalize_email(current_user.get("email")),
+                "Removed product from wishlist",
+                {
+                    "product_id": str(normalized_product_id),
+                    "variation_id": variation_filter or None,
+                },
+            )
+
+        message = (
+            "Item removed from your wishlist."
+            if removed_any
+            else "That item was not on your wishlist."
+        )
+
+        return jsonify({"message": message, "items": serialized_items})
 
     # --- Content Routes ---
 
