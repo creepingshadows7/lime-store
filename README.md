@@ -1,1 +1,1 @@
-vB2.5 Added wishlist option
+v2.5 Added wishlist option
